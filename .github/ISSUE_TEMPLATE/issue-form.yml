@@ -1,0 +1,57 @@
+name: 'Jira 연동 이슈 생성'
+description: 'Repo에 이슈를 생성하며, 생성된 이슈는 Jira와 연동됩니다.'
+title: '이슈 이름을 작성해주세요'
+body:
+  - type: input
+    id: parentKey
+    attributes:
+      label: '🎟️ 상위 작업(Ticket Number)'
+      description: '상위 작업의 Ticket Number를 기입해주세요 (e.g. AIGORA-1)'
+      placeholder: 'AIGORA-00'
+    validations:
+      required: true
+
+  - type: input
+    id: branch
+    attributes:
+      label: '🌱 브랜치 이름(Branch)'
+      description: '영어로 브랜치 이름을 작성해주세요'
+    validations:
+      required: true
+
+  - type: input
+    id: base
+    attributes:
+      label: '🌿 base 브랜치 이름(Base Branch)'
+      description: '새 브랜치가 분기될 base 브랜치 이름을 작성해주세요 (e.g. develop, main)'
+    validations:
+      required: true
+
+  - type: input
+    id: description
+    attributes:
+      label: '⚠️ 이슈 요약(Description)'
+      description: '이슈에 대해서 간략히 설명해주세요'
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: '📝 상세 내용(Details)'
+      description: '이슈에 대해서 자세히 설명해주세요'
+      value: |
+        - About Details
+    validations:
+      required: false
+
+  - type: textarea
+    id: tasks
+    attributes:
+      label: '✅ 체크리스트(Tasks)'
+      description: '해당 이슈에 대해 필요한 작업목록을 작성해주세요'
+      value: |
+        - [ ] Task1
+        - [ ] Task2
+    validations:
+      required: true
