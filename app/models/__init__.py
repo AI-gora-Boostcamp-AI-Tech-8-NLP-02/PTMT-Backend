@@ -1,19 +1,21 @@
 """SQLModel Models - 데이터베이스 모델 정의
 
+테이블 구조:
+- users: 사용자 정보
+- refresh_tokens: JWT 리프레시 토큰 관리
+- papers: 업로드된 논문 정보
+- curriculums: 커리큘럼 + 그래프 데이터 (JSONB)
+
 TODO: Supabase 연결 후 실제 테이블과 매핑
-현재는 더미 모델로 구조만 정의
 """
 
-from app.models.user import User
+from app.models.user import User, RefreshToken
 from app.models.paper import Paper
-from app.models.curriculum import Curriculum, Keyword, Resource, KeywordEdge, LearningProgress
+from app.models.curriculum import Curriculum
 
 __all__ = [
     "User",
+    "RefreshToken",
     "Paper",
     "Curriculum",
-    "Keyword",
-    "Resource",
-    "KeywordEdge",
-    "LearningProgress",
 ]
