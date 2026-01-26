@@ -13,6 +13,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import get_current_user
+from app import crud
+from app.crud.errors import CrudConfigError, NotFoundError
 from app.schemas.common import ApiResponse, PaginationInfo
 from app.schemas.curriculum import (
     BudgetedTime,
@@ -35,6 +37,7 @@ from app.schemas.curriculum import (
 )
 from app.schemas.auth import MessageResponse
 from app.schemas.user import UserResponse
+from app.services import curriculum_generation_service
 
 router = APIRouter(prefix="/curriculums", tags=["curriculums"])
 
@@ -170,6 +173,57 @@ DUMMY_GRAPH_EDGES = [
 # API 엔드포인트
 # ===========================================
 
+def _map_status_to_api(value: Optional[str]) -> CurriculumStatus:
+    if value in {s.value for s in CurriculumStatus}:
+        return CurriculumStatus(value)  # type: ignore[arg-type]
+    # DB enum may contain values not present in API enum.
+    mapping = {
+        "options_set": CurriculumStatus.OPTIONS_SAVED,
+        "paper_attached": CurriculumStatus.DRAFT,
+    }
+    return mapping.get(value or "", CurriculumStatus.DRAFT)
+
+
+def _map_purpose_to_api(value: Optional[str]) -> Optional[CurriculumPurpose]:
+    if value is None:
+        return None
+    if value in {p.value for p in CurriculumPurpose}:
+        return CurriculumPurpose(value)  # type: ignore[arg-type]
+    mapping = {
+        "trend": CurriculumPurpose.TREND_CHECK,
+        "code": CurriculumPurpose.CODE_IMPLEMENTATION,
+        "prepare_exam": CurriculumPurpose.EXAM_PREPARATION,
+    }
+    return mapping.get(value)
+
+
+def _map_level_to_api(value: Optional[str]) -> Optional[UserLevel]:
+    if value is None:
+        return None
+    if value in {l.value for l in UserLevel}:
+        return UserLevel(value)  # type: ignore[arg-type]
+    mapping = {
+        "worker": UserLevel.INDUSTRY,
+    }
+    return mapping.get(value)
+
+
+def _map_purpose_to_db(value: CurriculumPurpose) -> str:
+    mapping = {
+        CurriculumPurpose.TREND_CHECK: "trend",
+        CurriculumPurpose.CODE_IMPLEMENTATION: "code",
+        CurriculumPurpose.EXAM_PREPARATION: "prepare_exam",
+    }
+    return mapping.get(value, value.value)
+
+
+def _map_level_to_db(value: UserLevel) -> str:
+    mapping = {
+        UserLevel.INDUSTRY: "worker",
+    }
+    return mapping.get(value, value.value)
+
+
 @router.get("", response_model=ApiResponse[CurriculumListResponse])
 async def get_curriculums(
     status: Optional[str] = Query(None, description="필터링할 상태"),
@@ -184,16 +238,41 @@ async def get_curriculums(
     2. 상태별 필터링
     3. 페이지네이션
     """
-    # TODO: DB 조회
-    # query = select(Curriculum).where(Curriculum.user_id == current_user.id)
-    # if status:
-    #     query = query.where(Curriculum.status == status)
-    # curriculums = await db.exec(query.offset((page-1)*limit).limit(limit))
+    try:
+        rows, total = await crud.curriculums.list_curriculums(
+            status=status, page=page, limit=limit
+        )
+    except CrudConfigError:
+        return ApiResponse.fail(
+            "DB_NOT_CONFIGURED",
+            "DB 설정이 필요합니다. (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+        )
 
-    # 더미 응답
-    items = DUMMY_CURRICULUMS
-    if status:
-        items = [c for c in items if c.status.value == status]
+    items: list[CurriculumListItem] = []
+    for row in rows:
+        curriculum_id = str(row.get("id", ""))
+        paper_title = "Unknown Paper"
+        try:
+            linked_papers, _ = await crud.papers.get_paper_by_curr(
+                curriculum_id=curriculum_id, page=1, limit=1
+            )
+            if linked_papers:
+                paper_title = str(linked_papers[0].get("title") or paper_title)
+        except Exception:
+            pass
+
+        items.append(
+            CurriculumListItem(
+                id=curriculum_id,
+                title=str(row.get("title") or ""),
+                paper_title=paper_title,
+                status=_map_status_to_api(row.get("status")),
+                created_at=row.get("created_at") or datetime.utcnow(),
+                updated_at=row.get("updated_at") or row.get("created_at") or datetime.utcnow(),
+                node_count=int(row.get("node_count") or 0),
+                estimated_hours=float(row.get("estimated_hours") or 0),
+            )
+        )
 
     return ApiResponse.ok(
         CurriculumListResponse(
@@ -201,8 +280,8 @@ async def get_curriculums(
             pagination=PaginationInfo(
                 page=page,
                 limit=limit,
-                total=len(items),
-                has_more=False,
+                total=total,
+                has_more=(page * limit) < total,
             ),
         )
     )
@@ -220,31 +299,56 @@ async def get_curriculum(
     2. 권한 확인 (본인 소유)
     3. 상세 정보 반환
     """
-    # TODO: DB 조회
-    # curriculum = await crud.curriculum.get(db, id=curriculum_id)
-    # if not curriculum:
-    #     return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
-    # if curriculum.user_id != current_user.id:
-    #     return ApiResponse.fail("FORBIDDEN", "접근 권한이 없습니다.")
+    try:
+        row = await crud.curriculums.get_curriculum(curriculum_id)
+    except CrudConfigError:
+        return ApiResponse.fail(
+            "DB_NOT_CONFIGURED",
+            "DB 설정이 필요합니다. (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+        )
+    except NotFoundError:
+        return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
 
-    # 더미 응답
+    paper = PaperInfo(id="paper-unknown", title="Unknown Paper")
+    linked_papers, _ = await crud.papers.get_paper_by_curr(
+        curriculum_id=curriculum_id, page=1, limit=1
+    )
+    if linked_papers:
+        p = linked_papers[0]
+        paper = PaperInfo(
+            id=str(p.get("id", "paper-unknown")),
+            title=str(p.get("title") or "Unknown Paper"),
+            authors=p.get("authors"),
+            abstract=p.get("abstract"),
+        )
+
+    preferred_resources = row.get("preferred_resources") or None
+    pref: Optional[list[ResourceType]] = None
+    if isinstance(preferred_resources, list):
+        pref = []
+        for r in preferred_resources:
+            try:
+                pref.append(ResourceType(str(r)))
+            except Exception:
+                continue
+
+    bt = row.get("budgeted_time")
+    budget: Optional[BudgetedTime] = None
+    if isinstance(bt, dict) and "days" in bt and "daily_hours" in bt:
+        budget = BudgetedTime(days=int(bt["days"]), daily_hours=float(bt["daily_hours"]))
+
     return ApiResponse.ok(
         CurriculumResponse(
-            id=curriculum_id,
-            title="NLP 트랜스포머 입문",
-            status=CurriculumStatus.READY,
-            purpose=CurriculumPurpose.DEEP_RESEARCH,
-            level=UserLevel.MASTER,
-            budgeted_time=BudgetedTime(days=14, daily_hours=2),
-            preferred_resources=[ResourceType.PAPER, ResourceType.ARTICLE],
-            paper=PaperInfo(
-                id="paper-1",
-                title="Attention Is All You Need",
-                authors=["Vaswani et al."],
-                abstract="트랜스포머 아키텍처를 제안한 논문...",
-            ),
-            created_at=datetime(2024, 1, 20, 10, 30),
-            updated_at=datetime(2024, 1, 20, 12, 0),
+            id=str(row.get("id", curriculum_id)),
+            title=str(row.get("title") or ""),
+            status=_map_status_to_api(row.get("status")),
+            purpose=_map_purpose_to_api(row.get("purpose")),
+            level=_map_level_to_api(row.get("level")),
+            budgeted_time=budget,
+            preferred_resources=pref,
+            paper=paper,
+            created_at=row.get("created_at") or datetime.utcnow(),
+            updated_at=row.get("updated_at") or row.get("created_at") or datetime.utcnow(),
         )
     )
 
@@ -261,12 +365,15 @@ async def delete_curriculum(
     2. 권한 확인
     3. 삭제 (cascade로 관련 데이터도 삭제)
     """
-    # TODO: DB 삭제
-    # curriculum = await crud.curriculum.get(db, id=curriculum_id)
-    # if not curriculum:
-    #     return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
-    # await crud.curriculum.delete(db, id=curriculum_id)
-
+    try:
+        await crud.curriculums.delete_curriculum(curriculum_id)
+    except CrudConfigError:
+        return ApiResponse.fail(
+            "DB_NOT_CONFIGURED",
+            "DB 설정이 필요합니다. (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+        )
+    except NotFoundError:
+        return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
     return ApiResponse.ok(MessageResponse(message="커리큘럼이 삭제되었습니다."))
 
 
@@ -284,23 +391,28 @@ async def set_options(
     3. 옵션 저장
     4. 상태를 options_saved로 변경
     """
-    # TODO: DB 업데이트
-    # curriculum = await crud.curriculum.get(db, id=curriculum_id)
-    # if not curriculum:
-    #     return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
-    # await crud.curriculum.update(db, id=curriculum_id,
-    #     purpose=options.purpose,
-    #     level=options.level,
-    #     known_concepts=options.known_concepts,
-    #     budgeted_time=options.budgeted_time.model_dump(),
-    #     preferred_resources=[r.value for r in options.preferred_resources],
-    #     status="options_saved"
-    # )
+    try:
+        await crud.curriculums.update_curriculum(
+            curriculum_id,
+            purpose=_map_purpose_to_db(options.purpose),
+            level=_map_level_to_db(options.level),
+            known_concepts=options.known_concepts,
+            budgeted_time=options.budgeted_time.model_dump(),
+            preferred_resources=[r.value for r in options.preferred_resources],
+            status="options_set",
+        )
+    except CrudConfigError:
+        return ApiResponse.fail(
+            "DB_NOT_CONFIGURED",
+            "DB 설정이 필요합니다. (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+        )
+    except NotFoundError:
+        return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
 
     return ApiResponse.ok(
         {
             "curriculum_id": curriculum_id,
-            "status": "options_saved",
+            "status": "options_set",
         }
     )
 
@@ -322,6 +434,17 @@ async def start_generation(
     3. 상태를 generating으로 변경
     4. 백그라운드 작업 시작 (AI 커리큘럼 생성)
     """
+    try:
+        # Minimal DB update + delegate heavy lifting to service stub.
+        await crud.curriculums.update_curriculum(curriculum_id, status="generating")
+    except CrudConfigError:
+        return ApiResponse.fail(
+            "DB_NOT_CONFIGURED",
+            "DB 설정이 필요합니다. (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+        )
+    except NotFoundError:
+        return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
+    await curriculum_generation_service.start_generation(curriculum_id)
     return ApiResponse.ok(
         GenerationStartResponse(
             curriculum_id=curriculum_id,
@@ -336,6 +459,7 @@ async def check_status(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[GenerationStatusResponse]:
     """생성 상태 확인 (폴링용)"""
+    await curriculum_generation_service.get_generation_status(curriculum_id)
     return ApiResponse.ok(
         GenerationStatusResponse(
             curriculum_id=curriculum_id,
@@ -352,6 +476,7 @@ async def get_graph(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[CurriculumGraphResponse]:
     """커리큘럼 그래프 조회"""
+    await curriculum_generation_service.get_graph(curriculum_id)
     return ApiResponse.ok(
         CurriculumGraphResponse(
             meta=CurriculumGraphMeta(

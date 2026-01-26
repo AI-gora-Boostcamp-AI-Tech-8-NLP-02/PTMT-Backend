@@ -10,11 +10,13 @@ TODO: 실제 구현 시
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, status
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Query, status
 
 from app.api.deps import get_current_user
+from app import crud
+from app.crud.errors import CrudConfigError, NotFoundError
 from app.core.config import settings
-from app.schemas.common import ApiResponse
+from app.schemas.common import ApiResponse, PaginationInfo
 from app.schemas.paper import (
     Keyword,
     LinkSubmitRequest,
@@ -22,6 +24,7 @@ from app.schemas.paper import (
     TitleSearchRequest,
 )
 from app.schemas.user import UserResponse
+from app.services import paper_service
 
 router = APIRouter(prefix="/papers", tags=["papers"])
 
@@ -40,6 +43,69 @@ DUMMY_KEYWORDS = [
     Keyword(name="Feed-Forward Network"),
     Keyword(name="Layer Normalization"),
 ]
+
+
+@router.get("", response_model=ApiResponse[dict])
+async def list_papers(
+    page: int = Query(1, ge=1, description="페이지 번호"),
+    limit: int = Query(10, ge=1, le=100, description="페이지당 항목 수"),
+    current_user: UserResponse = Depends(get_current_user),
+) -> ApiResponse[dict]:
+    """논문 목록 조회 (단순 CRUD)"""
+
+    try:
+        items, total = await crud.papers.list_papers(page=page, limit=limit)
+    except CrudConfigError:
+        return ApiResponse.ok(
+            {
+                "items": [],
+                "pagination": PaginationInfo(page=page, limit=limit, total=0, has_more=False),
+            }
+        )
+
+    return ApiResponse.ok(
+        {
+            "items": items,
+            "pagination": PaginationInfo(
+                page=page,
+                limit=limit,
+                total=total,
+                has_more=(page * limit) < total,
+            ),
+        }
+    )
+
+
+@router.get("/{paper_id}", response_model=ApiResponse[dict])
+async def get_paper(
+    paper_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+) -> ApiResponse[dict]:
+    """논문 단일 조회 (단순 CRUD)"""
+
+    try:
+        row = await crud.papers.get_paper(paper_id)
+    except CrudConfigError:
+        return ApiResponse.fail("DB_NOT_CONFIGURED", "DB 설정이 필요합니다.")
+    except NotFoundError:
+        return ApiResponse.fail("PAPER_NOT_FOUND", "논문을 찾을 수 없습니다.")
+    return ApiResponse.ok(row)
+
+
+@router.delete("/{paper_id}", response_model=ApiResponse[dict])
+async def delete_paper(
+    paper_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+) -> ApiResponse[dict]:
+    """논문 삭제 (단순 CRUD)"""
+
+    try:
+        await crud.papers.delete_paper(paper_id)
+    except CrudConfigError:
+        return ApiResponse.fail("DB_NOT_CONFIGURED", "DB 설정이 필요합니다.")
+    except NotFoundError:
+        return ApiResponse.fail("PAPER_NOT_FOUND", "논문을 찾을 수 없습니다.")
+    return ApiResponse.ok({"message": "논문이 삭제되었습니다."})
 
 
 @router.post("/pdf", response_model=ApiResponse[PaperUploadResponse])
@@ -62,6 +128,9 @@ async def upload_pdf(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="PDF 파일만 업로드 가능합니다.",
         )
+
+    # Complex logic stub (keep dummy response)
+    await paper_service.upload_pdf_stub(file=file, current_user=current_user)
 
     # 파일 크기 체크
     # TODO: 실제 구현 시 파일 크기 검증
@@ -116,19 +185,19 @@ async def submit_link(
     """
     # TODO: URL 검증 및 논문 정보 추출
     # paper_info = await paper_service.fetch_from_url(str(data.url))
-
-    # 더미 응답
-    paper_id = f"paper-{uuid.uuid4().hex[:8]}"
-    curriculum_id = f"curr-{uuid.uuid4().hex[:8]}"
+    try:
+        paper_row, curriculum_row = await paper_service.submit_link_stub(url=str(data.url))
+    except CrudConfigError:
+        return ApiResponse.fail("DB_NOT_CONFIGURED", "DB 설정이 필요합니다.")
 
     return ApiResponse.ok(
         PaperUploadResponse(
-            paper_id=paper_id,
-            curriculum_id=curriculum_id,
-            title="URL에서 분석한 논문",
-            authors=["Author from URL"],
-            abstract="AI가 링크의 논문을 분석 중입니다. (더미 데이터)",
-            language="english",
+            paper_id=str(paper_row["id"]),
+            curriculum_id=str(curriculum_row["id"]),
+            title=str(paper_row.get("title") or "URL에서 분석한 논문"),
+            authors=paper_row.get("authors") or ["Author from URL"],
+            abstract=str(paper_row.get("abstract") or "AI가 링크의 논문을 분석 중입니다. (더미 데이터)"),
+            language=str(paper_row.get("language") or "english"),
             keywords=DUMMY_KEYWORDS,
             source_url=str(data.url),
         )
@@ -151,6 +220,7 @@ async def search_by_title(
     # search_result = await paper_service.search_by_title(data.title)
     # if not search_result:
     #     return ApiResponse.fail("PAPER_SEARCH_NOT_FOUND", "논문을 찾을 수 없습니다.")
+    await paper_service.search_by_title_stub(data=data, current_user=current_user)
 
     # 더미 응답
     paper_id = f"paper-{uuid.uuid4().hex[:8]}"
