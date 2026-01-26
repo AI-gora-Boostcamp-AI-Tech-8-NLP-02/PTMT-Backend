@@ -12,7 +12,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, status
 
-from app.api.v1.deps import get_current_user
+from app.api.deps import get_current_user
 from app.core.config import settings
 from app.schemas.common import ApiResponse
 from app.schemas.paper import (
@@ -48,7 +48,7 @@ async def upload_pdf(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[PaperUploadResponse]:
     """PDF 업로드
-    
+
     TODO: 실제 구현
     1. 파일 검증 (크기, 형식)
     2. Supabase Storage에 업로드
@@ -62,7 +62,7 @@ async def upload_pdf(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="PDF 파일만 업로드 가능합니다.",
         )
-    
+
     # 파일 크기 체크
     # TODO: 실제 구현 시 파일 크기 검증
     # contents = await file.read()
@@ -71,22 +71,22 @@ async def upload_pdf(
     #         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
     #         detail=f"파일 크기는 {settings.MAX_UPLOAD_SIZE_MB}MB를 초과할 수 없습니다.",
     #     )
-    
+
     # TODO: Supabase Storage에 업로드
     # storage_path = f"papers/{current_user.id}/{uuid.uuid4()}.pdf"
     # await supabase.storage.upload(storage_path, contents)
-    
+
     # TODO: PDF 텍스트 추출
     # extracted_text = await pdf_service.extract_text(contents)
-    
+
     # TODO: AI로 키워드 추출
     # keywords = await ai_service.extract_keywords(extracted_text)
-    
+
     # 더미 응답
     paper_id = f"paper-{uuid.uuid4().hex[:8]}"
     curriculum_id = f"curr-{uuid.uuid4().hex[:8]}"
     paper_title = file.filename.replace(".pdf", "") if file.filename else "Unknown Paper"
-    
+
     return ApiResponse.ok(
         PaperUploadResponse(
             paper_id=paper_id,
@@ -107,7 +107,7 @@ async def submit_link(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[PaperUploadResponse]:
     """링크 제출
-    
+
     TODO: 실제 구현
     1. URL 유효성 검사
     2. URL에서 PDF 다운로드 또는 메타데이터 추출
@@ -116,11 +116,11 @@ async def submit_link(
     """
     # TODO: URL 검증 및 논문 정보 추출
     # paper_info = await paper_service.fetch_from_url(str(data.url))
-    
+
     # 더미 응답
     paper_id = f"paper-{uuid.uuid4().hex[:8]}"
     curriculum_id = f"curr-{uuid.uuid4().hex[:8]}"
-    
+
     return ApiResponse.ok(
         PaperUploadResponse(
             paper_id=paper_id,
@@ -141,7 +141,7 @@ async def search_by_title(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[PaperUploadResponse]:
     """논문 제목 검색
-    
+
     TODO: 실제 구현
     1. 외부 API로 논문 검색 (arXiv, Semantic Scholar, Google Scholar)
     2. 검색 결과에서 논문 정보 추출
@@ -151,11 +151,11 @@ async def search_by_title(
     # search_result = await paper_service.search_by_title(data.title)
     # if not search_result:
     #     return ApiResponse.fail("PAPER_SEARCH_NOT_FOUND", "논문을 찾을 수 없습니다.")
-    
+
     # 더미 응답
     paper_id = f"paper-{uuid.uuid4().hex[:8]}"
     curriculum_id = f"curr-{uuid.uuid4().hex[:8]}"
-    
+
     return ApiResponse.ok(
         PaperUploadResponse(
             paper_id=paper_id,
@@ -167,3 +167,4 @@ async def search_by_title(
             keywords=DUMMY_KEYWORDS,
         )
     )
+

@@ -12,7 +12,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.api.v1.deps import get_current_user
+from app.api.deps import get_current_user
 from app.schemas.common import ApiResponse, PaginationInfo
 from app.schemas.curriculum import (
     BudgetedTime,
@@ -178,7 +178,7 @@ async def get_curriculums(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[CurriculumListResponse]:
     """커리큘럼 목록 조회
-    
+
     TODO: 실제 구현
     1. 현재 사용자의 커리큘럼 조회
     2. 상태별 필터링
@@ -189,12 +189,12 @@ async def get_curriculums(
     # if status:
     #     query = query.where(Curriculum.status == status)
     # curriculums = await db.exec(query.offset((page-1)*limit).limit(limit))
-    
+
     # 더미 응답
     items = DUMMY_CURRICULUMS
     if status:
         items = [c for c in items if c.status.value == status]
-    
+
     return ApiResponse.ok(
         CurriculumListResponse(
             items=items,
@@ -214,7 +214,7 @@ async def get_curriculum(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[CurriculumResponse]:
     """커리큘럼 단일 조회
-    
+
     TODO: 실제 구현
     1. curriculum_id로 조회
     2. 권한 확인 (본인 소유)
@@ -226,7 +226,7 @@ async def get_curriculum(
     #     return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
     # if curriculum.user_id != current_user.id:
     #     return ApiResponse.fail("FORBIDDEN", "접근 권한이 없습니다.")
-    
+
     # 더미 응답
     return ApiResponse.ok(
         CurriculumResponse(
@@ -255,7 +255,7 @@ async def delete_curriculum(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[MessageResponse]:
     """커리큘럼 삭제
-    
+
     TODO: 실제 구현
     1. curriculum_id로 조회
     2. 권한 확인
@@ -266,10 +266,8 @@ async def delete_curriculum(
     # if not curriculum:
     #     return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
     # await crud.curriculum.delete(db, id=curriculum_id)
-    
-    return ApiResponse.ok(
-        MessageResponse(message="커리큘럼이 삭제되었습니다.")
-    )
+
+    return ApiResponse.ok(MessageResponse(message="커리큘럼이 삭제되었습니다."))
 
 
 @router.post("/{curriculum_id}/options", response_model=ApiResponse[dict])
@@ -279,7 +277,7 @@ async def set_options(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[dict]:
     """커리큘럼 옵션 저장
-    
+
     TODO: 실제 구현
     1. curriculum_id로 조회
     2. 권한 확인
@@ -290,7 +288,7 @@ async def set_options(
     # curriculum = await crud.curriculum.get(db, id=curriculum_id)
     # if not curriculum:
     #     return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
-    # await crud.curriculum.update(db, id=curriculum_id, 
+    # await crud.curriculum.update(db, id=curriculum_id,
     #     purpose=options.purpose,
     #     level=options.level,
     #     known_concepts=options.known_concepts,
@@ -298,34 +296,32 @@ async def set_options(
     #     preferred_resources=[r.value for r in options.preferred_resources],
     #     status="options_saved"
     # )
-    
-    return ApiResponse.ok({
-        "curriculum_id": curriculum_id,
-        "status": "options_saved",
-    })
+
+    return ApiResponse.ok(
+        {
+            "curriculum_id": curriculum_id,
+            "status": "options_saved",
+        }
+    )
 
 
-@router.post("/{curriculum_id}/generate", response_model=ApiResponse[GenerationStartResponse], status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/{curriculum_id}/generate",
+    response_model=ApiResponse[GenerationStartResponse],
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def start_generation(
     curriculum_id: str,
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[GenerationStartResponse]:
     """커리큘럼 생성 시작 (비동기)
-    
+
     TODO: 실제 구현
     1. curriculum_id로 조회
     2. 상태가 options_saved인지 확인
     3. 상태를 generating으로 변경
     4. 백그라운드 작업 시작 (AI 커리큘럼 생성)
     """
-    # TODO: 백그라운드 작업 시작
-    # curriculum = await crud.curriculum.get(db, id=curriculum_id)
-    # if curriculum.status != "options_saved":
-    #     return ApiResponse.fail("CURRICULUM_NOT_READY", "옵션이 설정되지 않았습니다.")
-    # 
-    # await crud.curriculum.update(db, id=curriculum_id, status="generating")
-    # background_tasks.add_task(generate_curriculum, curriculum_id)
-    
     return ApiResponse.ok(
         GenerationStartResponse(
             curriculum_id=curriculum_id,
@@ -339,18 +335,7 @@ async def check_status(
     curriculum_id: str,
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[GenerationStatusResponse]:
-    """생성 상태 확인 (폴링용)
-    
-    TODO: 실제 구현
-    1. curriculum_id로 조회
-    2. 현재 상태 반환
-    3. 진행률 계산 (가능한 경우)
-    """
-    # TODO: 상태 조회
-    # curriculum = await crud.curriculum.get(db, id=curriculum_id)
-    # progress = await get_generation_progress(curriculum_id)
-    
-    # 더미 응답 - 항상 완료 상태 반환
+    """생성 상태 확인 (폴링용)"""
     return ApiResponse.ok(
         GenerationStatusResponse(
             curriculum_id=curriculum_id,
@@ -366,22 +351,7 @@ async def get_graph(
     curriculum_id: str,
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[CurriculumGraphResponse]:
-    """커리큘럼 그래프 조회
-    
-    TODO: 실제 구현
-    1. curriculum_id로 조회
-    2. 상태가 ready인지 확인
-    3. 그래프 데이터 반환
-    """
-    # TODO: DB 조회
-    # curriculum = await crud.curriculum.get(db, id=curriculum_id)
-    # if curriculum.status != "ready":
-    #     return ApiResponse.fail("CURRICULUM_NOT_READY", "커리큘럼이 아직 생성 중입니다.")
-    # 
-    # nodes = await crud.keyword.get_by_curriculum(db, curriculum_id)
-    # edges = await crud.edge.get_by_curriculum(db, curriculum_id)
-    
-    # 더미 응답
+    """커리큘럼 그래프 조회"""
     return ApiResponse.ok(
         CurriculumGraphResponse(
             meta=CurriculumGraphMeta(
@@ -397,5 +367,4 @@ async def get_graph(
             edges=DUMMY_GRAPH_EDGES,
         )
     )
-
 
