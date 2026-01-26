@@ -197,8 +197,8 @@ mypy app
 ### 새 API 추가
 
 1. `app/schemas/`에 요청/응답 스키마 정의
-2. `app/api/v1/routes/`에 라우터 추가
-3. `app/api/v1/router.py`에 라우터 등록
+2. `app/api/routes/`에 라우터 추가
+3. `app/api/router.py`에 라우터 등록
 4. 테스트 작성
 
 ### 응답 형식

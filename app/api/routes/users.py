@@ -9,7 +9,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends
 
-from app.api.v1.deps import get_current_user
+from app.api.deps import get_current_user
 from app.schemas.common import ApiResponse
 from app.schemas.user import UserResponse, UserStats, UserUpdateRequest
 
@@ -21,7 +21,7 @@ async def get_profile(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[UserResponse]:
     """내 프로필 조회
-    
+
     TODO: 실제 구현
     1. 현재 사용자 정보 반환 (get_current_user에서 처리됨)
     2. 통계 정보 계산 (total_curriculums, completed 등)
@@ -29,7 +29,7 @@ async def get_profile(
     # TODO: 통계 정보 계산
     # stats = await calculate_user_stats(db, user_id=current_user.id)
     # current_user.stats = stats
-    
+
     return ApiResponse.ok(current_user)
 
 
@@ -39,7 +39,7 @@ async def update_profile(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[UserResponse]:
     """프로필 수정
-    
+
     TODO: 실제 구현
     1. 유효성 검사
     2. DB 업데이트
@@ -48,7 +48,7 @@ async def update_profile(
     # TODO: DB 업데이트
     # updated_fields = data.model_dump(exclude_unset=True)
     # updated_user = await crud.user.update(db, id=current_user.id, **updated_fields)
-    
+
     # 더미 응답: 요청된 필드 반영
     updated_user = UserResponse(
         id=current_user.id,
@@ -59,5 +59,6 @@ async def update_profile(
         created_at=current_user.created_at,
         stats=current_user.stats,
     )
-    
+
     return ApiResponse.ok(updated_user)
+
