@@ -6,7 +6,7 @@ TODO: 실제 구현 시
 - 토큰 저장 및 관리
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -57,7 +57,7 @@ async def signup(data: SignupRequest) -> ApiResponse[AuthResponse]:
         name=data.name,
         role="user",
         avatar_url=None,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         stats=UserStats(
             total_curriculums=0,
             completed_curriculums=0,
@@ -107,7 +107,7 @@ async def login(data: LoginRequest) -> ApiResponse[AuthResponse]:
         name="홍길동",
         role="user",
         avatar_url=None,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         stats=UserStats(
             total_curriculums=5,
             completed_curriculums=3,
