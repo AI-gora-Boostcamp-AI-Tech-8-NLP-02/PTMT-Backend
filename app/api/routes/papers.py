@@ -192,7 +192,10 @@ async def submit_link(
     # TODO: URL 검증 및 논문 정보 추출
     # paper_info = await paper_service.fetch_from_url(str(data.url))
     try:
-        paper_row, curriculum_row = await paper_service.submit_link_stub(url=str(data.url))
+        paper_row, curriculum_row = await paper_service.submit_link_stub(
+        url=str(data.url),
+        user_id=current_user.id,
+    )
     except CrudConfigError:
         return ApiResponse.fail("DB_NOT_CONFIGURED", "DB 설정이 필요합니다.")
 
