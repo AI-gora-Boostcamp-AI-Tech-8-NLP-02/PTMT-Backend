@@ -9,8 +9,10 @@ import asyncio
 import weakref
 from typing import Any, Optional
 
+import httpx
 from postgrest.exceptions import APIError
 from supabase import AsyncClient, acreate_client
+from supabase.lib.client_options import AsyncClientOptions
 
 from app.core.config import settings
 
@@ -32,10 +34,32 @@ def require_supabase_config() -> tuple[str, str]:
     return url, key
 
 
+def require_supabase_auth_config() -> tuple[str, str]:
+    """Return (url, anon_key) for Auth operations.
+
+    Auth operations use the anon key, not the service role key.
+    """
+
+    url = (settings.SUPABASE_URL or "").strip()
+    key = (settings.SUPABASE_ANON_KEY or "").strip()
+    if not url:
+        raise CrudConfigError("SUPABASE_URL is not configured.")
+    if not key:
+        raise CrudConfigError("SUPABASE_ANON_KEY is not configured.")
+    return url, key
+
+
 _clients_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, AsyncClient]" = (
     weakref.WeakKeyDictionary()
 )
 _locks_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
+    weakref.WeakKeyDictionary()
+)
+
+_auth_clients_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, AsyncClient]" = (
+    weakref.WeakKeyDictionary()
+)
+_auth_locks_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
     weakref.WeakKeyDictionary()
 )
 
@@ -45,6 +69,8 @@ async def get_supabase_client() -> AsyncClient:
 
     Cache is per-event-loop to avoid reusing an async HTTP client across
     different loops (common in test runners).
+
+    Uses the service role key for server-side CRUD operations.
     """
 
     loop = asyncio.get_running_loop()
@@ -62,8 +88,48 @@ async def get_supabase_client() -> AsyncClient:
         if existing is not None:
             return existing
         url, key = require_supabase_config()
-        client = await acreate_client(url, key)
+        # 타임아웃 설정: PostgREST 타임아웃을 60초로 설정
+        timeout = httpx.Timeout(connect=30.0, read=30.0, write=30.0, pool=60.0)
+        options = AsyncClientOptions(
+            postgrest_client_timeout=timeout,
+            httpx_client=httpx.AsyncClient(timeout=timeout)
+        )
+        client = await acreate_client(url, key, options=options)
         _clients_by_loop[loop] = client
+        return client
+
+
+async def get_supabase_auth_client() -> AsyncClient:
+    """Create and cache an async Supabase client instance for Auth operations.
+
+    Uses the anon key (not service role key) for client-side Auth operations.
+    Cache is per-event-loop to avoid reusing an async HTTP client across
+    different loops (common in test runners).
+    """
+
+    loop = asyncio.get_running_loop()
+    existing = _auth_clients_by_loop.get(loop)
+    if existing is not None:
+        return existing
+
+    lock = _auth_locks_by_loop.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _auth_locks_by_loop[loop] = lock
+
+    async with lock:
+        existing = _auth_clients_by_loop.get(loop)
+        if existing is not None:
+            return existing
+        url, key = require_supabase_auth_config()
+        # 타임아웃 설정: Auth 요청을 위한 타임아웃 늘림
+        timeout = httpx.Timeout(connect=30.0, read=30.0, write=30.0, pool=60.0)
+        options = AsyncClientOptions(
+            postgrest_client_timeout=timeout,
+            httpx_client=httpx.AsyncClient(timeout=timeout)
+        )
+        client = await acreate_client(url, key, options=options)
+        _auth_clients_by_loop[loop] = client
         return client
 
 
