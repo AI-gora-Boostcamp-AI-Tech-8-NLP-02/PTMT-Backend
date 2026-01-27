@@ -109,6 +109,7 @@ async def delete_paper(
     return ApiResponse.ok({"message": "논문이 삭제되었습니다."})
 
 
+
 @router.post("/pdf", response_model=ApiResponse[PaperUploadResponse])
 async def upload_pdf(
     file: UploadFile = File(...),
@@ -138,80 +139,24 @@ async def upload_pdf(
             detail=f"파일 크기는 {settings.MAX_UPLOAD_SIZE_MB}MB를 초과할 수 없습니다.",
         )
 
-    # Supabase Storage에 업로드
-    pdf_url: str = ""
-    
+    # PDF 업로드 및 처리
     try:
-        client = await get_supabase_client()
-        
-        # Storage 경로 생성: {user_id}/{uuid}.pdf
-        file_id = uuid.uuid4()
-        storage_path = f"{current_user.id}/{file_id}.pdf"
-        
-        # Supabase Storage에 업로드
-        # bucket 이름은 "papers"로 가정 (Supabase 대시보드에서 생성 필요)
-        storage_response = await client.storage.from_("papers").upload(
-            path=storage_path,
-            file=contents,
-            file_options={"content-type": "application/pdf"}
-        )
-        
-        # 업로드된 파일의 공개 URL 생성
-        pdf_url = await client.storage.from_("papers").get_public_url(storage_path)
-        
-        print(f"[PDF Upload] 파일 업로드 완료: {storage_path}")
-        print(f"[PDF Upload] 공개 URL: {pdf_url}")
-        
-    except Exception as e:
-        print(f"[PDF Upload Error] Supabase Storage 업로드 실패: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"파일 업로드 중 오류가 발생했습니다: {str(e)}",
-        )
-
-    # PDF 텍스트 추출 (TODO: 실제 구현)
-    print(f"[PDF Text Extraction] PDF 텍스트 추출 시작: {file.filename}")
-    print(f"[PDF Text Extraction] 파일 크기: {len(contents)} bytes")
-    # TODO: 실제 PDF 텍스트 추출 구현
-    # extracted_text = await pdf_service.extract_text(contents)
-    # print(f"[PDF Text Extraction] 추출된 텍스트 길이: {len(extracted_text)} characters")
-
-    # AI로 키워드 추출 (TODO: 실제 구현)
-    print(f"[AI Keyword Extraction] AI 키워드 추출 시작")
-    # TODO: 실제 AI 키워드 추출 구현
-    # keywords = await ai_service.extract_keywords(extracted_text)
-    # print(f"[AI Keyword Extraction] 추출된 키워드: {keywords}")
-
-    # Paper 테이블에 레코드 생성
-    paper_title = file.filename.replace(".pdf", "") if file.filename else "Unknown Paper"
-    
-    try:
-        # Paper 생성
-        paper = await crud.papers.create_paper(
-            title=paper_title,
-            authors=["Unknown Author"],  # TODO: PDF에서 추출
-            abstract="AI가 논문을 분석하여 핵심 개념을 추출했습니다. (더미 데이터)",  # TODO: PDF에서 추출
-            language="english",
-            source_url=None,
-            pdf_storage_path=storage_path,  # Storage 경로 저장
-        )
-        
-        # User-Paper 연결 (junction table)
-        await crud.junctions.add_user_paper(
+        paper, curriculum, pdf_url = await paper_service.process_pdf_upload(
+            contents=contents,
+            filename=file.filename,
             user_id=current_user.id,
-            paper_id=str(paper["id"]),
+            user_email=current_user.email,
+            user_name=current_user.name,
+            user_avatar_url=current_user.avatar_url,
+            user_role=current_user.role,
         )
         
-        print(f"[PDF Upload] Paper 생성 완료: {paper['id']}")
-        print(f"[PDF Upload] User-Paper 연결 완료")
-        
-        # 더미 curriculum_id (응답 스키마 호환을 위해)
-        curriculum_id = f"curr-{uuid.uuid4().hex[:8]}"
+        paper_title = file.filename.replace(".pdf", "") if file.filename else "Unknown Paper"
         
         return ApiResponse.ok(
             PaperUploadResponse(
                 paper_id=str(paper["id"]),
-                curriculum_id=curriculum_id,
+                curriculum_id=str(curriculum["id"]),
                 title=paper_title,
                 authors=paper.get("authors") or ["Unknown Author"],
                 abstract=paper.get("abstract") or "AI가 논문을 분석하여 핵심 개념을 추출했습니다. (더미 데이터)",
@@ -272,30 +217,48 @@ async def search_by_title(
 ) -> ApiResponse[PaperUploadResponse]:
     """논문 제목 검색
 
-    TODO: 실제 구현
-    1. 외부 API로 논문 검색 (arXiv, Semantic Scholar, Google Scholar)
-    2. 검색 결과에서 논문 정보 추출
+    1. 외부 API로 논문 검색 (arXiv, Semantic Scholar, Google Scholar) - TODO
+    2. 검색 결과에서 논문 정보 추출 - TODO
     3. Paper 및 Curriculum(draft) 생성
     """
-    # TODO: 외부 API로 검색
-    # search_result = await paper_service.search_by_title(data.title)
-    # if not search_result:
-    #     return ApiResponse.fail("PAPER_SEARCH_NOT_FOUND", "논문을 찾을 수 없습니다.")
-    await paper_service.search_by_title_stub(data=data, current_user=current_user)
-
-    # 더미 응답
-    paper_id = f"paper-{uuid.uuid4().hex[:8]}"
-    curriculum_id = f"curr-{uuid.uuid4().hex[:8]}"
-
-    return ApiResponse.ok(
-        PaperUploadResponse(
-            paper_id=paper_id,
-            curriculum_id=curriculum_id,
+    try:
+        # TODO: 실제 외부 API 검색 구현
+        # search_result = await paper_service.search_by_title(data.title)
+        # if not search_result:
+        #     raise HTTPException(status_code=404, detail="논문을 찾을 수 없습니다.")
+        
+        # 검색 결과를 통해 Paper와 Curriculum 생성
+        # TODO: 실제 검색 결과 사용 시 아래 값들을 검색 결과에서 가져오기
+        paper, curriculum = await paper_service.submit_search_stub(
             title=data.title,
-            authors=["Vaswani et al."],
-            abstract="AI가 논문을 분석하여 학습 경로를 생성합니다. (더미 데이터)",
-            language="english",
-            keywords=DUMMY_KEYWORDS,
+            user_id=current_user.id,
+            authors=["Vaswani et al."],  # TODO: 검색 결과에서 가져오기
+            abstract="AI가 논문을 분석하여 학습 경로를 생성합니다. (더미 데이터)",  # TODO: 검색 결과에서 가져오기
+            source_url=None,  # TODO: 검색 결과에서 가져오기
         )
-    )
+        
+        return ApiResponse.ok(
+            PaperUploadResponse(
+                paper_id=str(paper["id"]),
+                curriculum_id=str(curriculum["id"]),
+                title=data.title,
+                authors=paper.get("authors") or ["Vaswani et al."],
+                abstract=paper.get("abstract") or "AI가 논문을 분석하여 학습 경로를 생성합니다.",
+                language=paper.get("language") or "english",
+                keywords=DUMMY_KEYWORDS,
+                source_url=paper.get("source_url"),
+            )
+        )
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        print(f"[Search Error] 검색 중 오류 발생: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"논문 검색 중 오류가 발생했습니다: {str(e)}",
+        )
 
