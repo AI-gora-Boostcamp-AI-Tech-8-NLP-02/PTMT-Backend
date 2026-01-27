@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from app.core.auth_errors import (
     AuthErrorCode,
@@ -12,6 +13,7 @@ from app.core.auth_errors import (
     validate_supabase_config,
 )
 from app.crud.supabase_client import get_supabase_auth_client, get_supabase_client
+from app.models.user import User
 from app.schemas.user import UserResponse, UserStats
 
 
@@ -80,28 +82,34 @@ async def signup_with_email(
             user_name = user_metadata.get("name", name)
             avatar_url = user_metadata.get("avatar_url")
             
-            # Supabase 클라이언트를 사용하여 id를 명시적으로 지정하여 insert
-            supabase_client = await get_supabase_client()
-            payload = {
-                "id": auth_user_id,  # Supabase Auth의 user.id 사용
-                "email": email,
-                "password_hash": "",  # Supabase Auth에서 관리하므로 빈 값
-                "name": user_name,
-                "avatar_url": avatar_url,
-                "role": "user",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
+            # User 모델을 사용하여 payload 생성
+            now = datetime.now(timezone.utc)
+            user_model = User(
+                id=UUID(auth_user_id),
+                email=email,
+                name=user_name,
+                avatar_url=avatar_url,
+                role="user",
+                created_at=now,
+                updated_at=now,
+            )
             
-            await supabase_client.table("users").insert(payload).execute()
+            # Supabase 클라이언트를 사용하여 insert
+            supabase_client = await get_supabase_client()
+            result = await supabase_client.table("users").insert(user_model.to_insert_dict()).execute()
+            print(f"[Signup] users 테이블에 사용자 추가 성공: {auth_user_id}")
         except Exception as db_error:
-            # users 테이블 생성 실패 시 로깅 (선택적)
-            # Auth는 성공했으므로 계속 진행하되, 에러 정보는 보관
+            # users 테이블 생성 실패 시 로깅
             error_str = str(db_error).lower()
+            print(f"[Signup] users 테이블 추가 실패: {db_error}")
+            print(f"[Signup] User model: {user_model.to_insert_dict()}")
+            
             # 이미 존재하는 경우는 무시 (중복 생성 방지)
             if "duplicate" not in error_str and "already exists" not in error_str and "unique" not in error_str:
-                # 다른 에러는 로깅하거나 처리
-                pass
+                # 다른 에러는 심각한 문제일 수 있으므로 로깅
+                print(f"[Signup] 심각한 에러 발생: {type(db_error).__name__}: {db_error}")
+            else:
+                print(f"[Signup] 이미 존재하는 사용자 (무시)")
 
         # Session이 없으면 이메일 확인이 필요한 경우
         if session is None:
