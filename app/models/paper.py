@@ -22,7 +22,6 @@ class Paper(SQLModel, table=True):
     __tablename__ = "papers"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    user_id: UUID = Field(foreign_key="users.id", index=True)
     title: str = Field(max_length=500)
     authors: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(String)))
     abstract: Optional[str] = Field(default=None)
