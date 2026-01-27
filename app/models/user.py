@@ -13,29 +13,38 @@ from sqlmodel import Field, SQLModel
 class User(SQLModel, table=True):
     """사용자 모델
     
-    TODO: 실제 DB 연결 시 구현
-    - Supabase Auth와 연동 검토
-    - 비밀번호 해시 저장
-    - 이메일 인증 플래그 추가
+    Supabase Auth와 연동되는 커스텀 users 테이블
+    - 비밀번호는 Supabase Auth에서 관리하므로 password_hash 필드 없음
+    - auth.users와 동일한 id 사용
     """
     __tablename__ = "users"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     email: str = Field(unique=True, index=True, max_length=255)
-    password_hash: str = Field(max_length=255)
     name: str = Field(max_length=100)
     avatar_url: Optional[str] = Field(default=None)
     role: str = Field(default="user", max_length=20)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    def to_insert_dict(self) -> dict:
+        """Supabase insert용 딕셔너리 변환"""
+        return {
+            "id": str(self.id),
+            "email": self.email,
+            "name": self.name,
+            "avatar_url": self.avatar_url,
+            "role": self.role,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
 
 
 class RefreshToken(SQLModel, table=True):
     """리프레시 토큰 모델
     
-    TODO: 토큰 관리 구현
-    - 만료 체크
-    - 로그아웃 시 revoke
+    Note: Supabase Auth에서 토큰을 관리하므로 이 테이블은 현재 사용되지 않음
+    향후 추가 토큰 관리가 필요한 경우 사용
     """
     __tablename__ = "refresh_tokens"
 
