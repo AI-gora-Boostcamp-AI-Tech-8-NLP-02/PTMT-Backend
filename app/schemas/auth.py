@@ -1,6 +1,6 @@
 """Auth Schemas - 인증 관련 요청/응답 스키마"""
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.schemas.user import UserResponse
 
@@ -9,6 +9,15 @@ class LoginRequest(BaseModel):
     """로그인 요청"""
     email: EmailStr
     password: str = Field(..., min_length=1)
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "email": "user@example.com",
+                "password": "password123"
+            }
+        }
+    )
 
 
 class SignupRequest(BaseModel):
@@ -16,11 +25,34 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, description="최소 8자 이상")
     name: str = Field(..., min_length=1, max_length=100)
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "email": "user@example.com",
+                "password": "password123",
+                "name": "string"
+            }
+        }
+    )
 
 
 class RefreshTokenRequest(BaseModel):
     """토큰 갱신 요청"""
     refresh_token: str
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "refresh_token": "refresh_token_string"
+            }
+        }
+    )
+
+
+class LogoutRequest(BaseModel):
+    """로그아웃 요청 (선택적)"""
+    refresh_token: str | None = None
 
 
 class AuthResponse(BaseModel):
