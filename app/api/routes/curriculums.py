@@ -233,15 +233,24 @@ async def get_curriculums(
 ) -> ApiResponse[CurriculumListResponse]:
     """커리큘럼 목록 조회
 
-    TODO: 실제 구현
+    현재 로그인한 사용자의 커리큘럼 목록을 조회합니다.
     1. 현재 사용자의 커리큘럼 조회
-    2. 상태별 필터링
+    2. 상태별 필터링 (선택적)
     3. 페이지네이션
     """
     try:
-        rows, total = await crud.curriculums.list_curriculums(
-            status=status, page=page, limit=limit
+        # 현재 사용자의 커리큘럼 조회
+        rows, total = await crud.curriculums.get_curriculums_by_user(
+            user_id=current_user.id,
+            page=page,
+            limit=limit,
         )
+        
+        # 상태별 필터링 (선택적)
+        if status:
+            rows = [r for r in rows if r.get("status") == status]
+            total = len(rows)  # 필터링 후 총 개수 재계산
+        
     except CrudConfigError:
         return ApiResponse.fail(
             "DB_NOT_CONFIGURED",
