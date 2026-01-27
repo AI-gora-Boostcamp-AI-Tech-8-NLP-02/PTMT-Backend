@@ -107,6 +107,49 @@
 | `refresh_token` | string | JWT 리프레시 토큰 (토큰 갱신용) |
 | `expires_in` | number | 액세스 토큰 만료 시간 (초) |
 
+#### Error Responses
+
+**400 Bad Request** - 잘못된 요청 형식
+```json
+{
+  "detail": {
+    "code": "SIGNUP_FAILED",
+    "message": "회원가입 중 오류가 발생했습니다: [상세 메시지]"
+  }
+}
+```
+
+**409 Conflict** - 이메일 중복
+```json
+{
+  "detail": {
+    "code": "EMAIL_ALREADY_EXISTS",
+    "message": "이미 사용 중인 이메일입니다."
+  }
+}
+```
+
+**503 Service Unavailable** - Supabase 연결 실패
+```json
+{
+  "detail": {
+    "code": "CONNECTION_ERROR",
+    "message": "Supabase 서버에 연결할 수 없습니다. 네트워크 연결과 설정을 확인해주세요."
+  }
+}
+```
+
+또는
+
+```json
+{
+  "detail": {
+    "code": "CONFIG_ERROR",
+    "message": "SUPABASE_URL이 설정되지 않았습니다. .env 파일에 SUPABASE_URL을 설정해주세요."
+  }
+}
+```
+
 ---
 
 ### POST `/auth/login`
@@ -173,6 +216,59 @@
 | `refresh_token` | string | JWT 리프레시 토큰 |
 | `expires_in` | number | 토큰 만료 시간 (초) |
 
+#### Error Responses
+
+**401 Unauthorized** - 잘못된 자격증명
+```json
+{
+  "detail": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "이메일 또는 비밀번호가 올바르지 않습니다."
+  }
+}
+```
+
+**403 Forbidden** - 이메일 미인증
+```json
+{
+  "detail": {
+    "code": "EMAIL_NOT_CONFIRMED",
+    "message": "이메일 인증이 필요합니다."
+  }
+}
+```
+
+**400 Bad Request** - 로그인 실패
+```json
+{
+  "detail": {
+    "code": "LOGIN_FAILED",
+    "message": "로그인 중 오류가 발생했습니다: [상세 메시지]"
+  }
+}
+```
+
+**503 Service Unavailable** - Supabase 연결 실패
+```json
+{
+  "detail": {
+    "code": "CONNECTION_ERROR",
+    "message": "Supabase 서버에 연결할 수 없습니다. 네트워크 연결과 설정을 확인해주세요."
+  }
+}
+```
+
+또는
+
+```json
+{
+  "detail": {
+    "code": "CONFIG_ERROR",
+    "message": "SUPABASE_URL이 설정되지 않았습니다. .env 파일에 SUPABASE_URL을 설정해주세요."
+  }
+}
+```
+
 ---
 
 ### POST `/auth/logout`
@@ -203,6 +299,18 @@
 | Field | Type | Description |
 |-------|------|-------------|
 | `message` | string | 처리 결과 메시지 |
+
+#### Error Responses
+
+**401 Unauthorized** - 인증 필요
+```json
+{
+  "detail": {
+    "code": "UNAUTHORIZED",
+    "message": "인증이 필요합니다."
+  }
+}
+```
 
 ---
 
@@ -244,6 +352,49 @@
 |-------|------|-------------|
 | `access_token` | string | 새로 발급된 액세스 토큰 |
 | `expires_in` | number | 토큰 만료 시간 (초) |
+
+#### Error Responses
+
+**400 Bad Request** - 토큰 갱신 실패
+```json
+{
+  "detail": {
+    "code": "REFRESH_FAILED",
+    "message": "토큰 갱신에 실패했습니다."
+  }
+}
+```
+
+**401 Unauthorized** - 유효하지 않은 토큰
+```json
+{
+  "detail": {
+    "code": "INVALID_TOKEN",
+    "message": "유효하지 않은 토큰입니다."
+  }
+}
+```
+
+**503 Service Unavailable** - Supabase 연결 실패
+```json
+{
+  "detail": {
+    "code": "CONNECTION_ERROR",
+    "message": "Supabase 서버에 연결할 수 없습니다. 네트워크 연결과 설정을 확인해주세요."
+  }
+}
+```
+
+또는
+
+```json
+{
+  "detail": {
+    "code": "CONFIG_ERROR",
+    "message": "SUPABASE_URL이 설정되지 않았습니다. .env 파일에 SUPABASE_URL을 설정해주세요."
+  }
+}
+```
 
 ---
 
@@ -954,6 +1105,7 @@ PDF 파일 업로드 - PDF 논문을 업로드하고 AI가 분석합니다.
 | `INVALID_TOKEN` | 401 | 유효하지 않은 토큰 |
 | `TOKEN_EXPIRED` | 401 | 만료된 토큰 |
 | `INVALID_CREDENTIALS` | 401 | 이메일/비밀번호 불일치 |
+| `EMAIL_NOT_CONFIRMED` | 403 | 이메일 인증 필요 |
 | `FORBIDDEN` | 403 | 권한 없음 (다른 사용자 리소스 접근) |
 | `USER_NOT_FOUND` | 404 | 사용자 없음 |
 | `PAPER_NOT_FOUND` | 404 | 논문 없음 |
@@ -961,6 +1113,11 @@ PDF 파일 업로드 - PDF 논문을 업로드하고 AI가 분석합니다.
 | `PAPER_SEARCH_NOT_FOUND` | 404 | 검색 결과 없음 |
 | `CURRICULUM_NOT_READY` | 400 | 커리큘럼 생성 중 (그래프 조회 불가) |
 | `EMAIL_ALREADY_EXISTS` | 409 | 이메일 중복 |
+| `SIGNUP_FAILED` | 400 | 회원가입 실패 |
+| `LOGIN_FAILED` | 400 | 로그인 실패 |
+| `REFRESH_FAILED` | 400 | 토큰 갱신 실패 |
+| `CONNECTION_ERROR` | 503 | Supabase 서버 연결 실패 |
+| `CONFIG_ERROR` | 503 | Supabase 설정 오류 |
 | `INVALID_PDF` | 400 | PDF 형식 오류 |
 | `FILE_TOO_LARGE` | 413 | 파일 크기 초과 (25MB) |
 | `INVALID_URL` | 400 | 잘못된 URL 형식 |
