@@ -59,8 +59,6 @@ class Curriculum(SQLModel, table=True):
     __tablename__ = "curriculums"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    user_id: UUID = Field(foreign_key="users.id", index=True)
-    paper_id: UUID = Field(foreign_key="papers.id")
     title: Optional[str] = Field(default=None, max_length=200)
     status: str = Field(default="draft", max_length=20)  # draft, options_saved, generating, ready, failed
     

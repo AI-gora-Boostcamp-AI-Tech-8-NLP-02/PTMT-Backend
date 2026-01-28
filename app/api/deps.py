@@ -1,7 +1,4 @@
-"""API Dependencies - 의존성 주입
-
-TODO: 실제 DB 세션 및 인증 구현
-"""
+"""API Dependencies - 의존성 주입"""
 
 from typing import Optional
 
@@ -9,30 +6,12 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import settings
-from app.core.security import verify_token
-from app.schemas.user import UserResponse, UserStats
+from app.crud.supabase_client import get_supabase_auth_client
+from app.schemas.user import UserResponse
+from app.services import auth_service
 
 # Bearer 토큰 스키마
 security = HTTPBearer(auto_error=False)
-
-
-# ===========================================
-# 더미 사용자 데이터
-# ===========================================
-
-DUMMY_USER = UserResponse(
-    id="user-dummy-123",
-    email="demo@example.com",
-    name="홍길동",
-    role="user",
-    avatar_url=None,
-    created_at="2024-01-01T00:00:00Z",
-    stats=UserStats(
-        total_curriculums=5,
-        completed_curriculums=3,
-        total_study_hours=24.5,
-    ),
-)
 
 
 async def get_current_user(
@@ -40,26 +19,15 @@ async def get_current_user(
 ) -> UserResponse:
     """현재 인증된 사용자 반환
 
-    TODO: 실제 구현 시
-    1. 토큰 검증
-    2. DB에서 사용자 조회
-    3. 사용자 정보 반환
-
-    현재는 더미 사용자 반환
+    Supabase Auth JWT 토큰을 검증하여 사용자 정보를 반환합니다.
     """
-    # 개발 모드에서는 토큰 없이도 더미 사용자 반환
-    if settings.DEBUG:
-        if credentials is None:
-            # 개발 모드: 토큰 없어도 더미 사용자 반환
-            return DUMMY_USER
+    # 개발 모드에서는 토큰 없이도 더미 사용자 반환 (옵션)
+    if settings.DEBUG and credentials is None:
+        # 개발 모드: 토큰 없어도 더미 사용자 반환 (필요시 주석 처리)
+        # return DUMMY_USER
+        pass
 
-        # 토큰이 있으면 검증 시도 (실패해도 더미 사용자 반환)
-        token = credentials.credentials
-        user_id = verify_token(token)
-        # 검증 결과와 상관없이 더미 사용자 반환
-        return DUMMY_USER
-
-    # 프로덕션 모드: 엄격한 인증
+    # 토큰이 없으면 에러
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -67,23 +35,41 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # 토큰 검증
     token = credentials.credentials
-    user_id = verify_token(token)
 
-    if user_id is None:
+    try:
+        # Supabase Auth를 사용하여 토큰 검증 및 사용자 정보 조회
+        client = await get_supabase_auth_client()
+        response = await client.auth.get_user(token)
+
+        if response.user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="유효하지 않은 토큰입니다.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Supabase Auth user를 UserResponse로 변환
+        user_dict = response.user.model_dump() if hasattr(response.user, "model_dump") else dict(response.user) if hasattr(response.user, "__dict__") else {}
+        user_response = auth_service.supabase_user_to_user_response(user_dict)
+
+        return user_response
+
+    except Exception as e:
+        # Supabase Auth 에러 또는 기타 예외 처리
+        error_str = str(e).lower()
+        # Auth 관련 에러인지 확인
+        if "auth" in error_str or "token" in error_str or "unauthorized" in error_str or "invalid" in error_str:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="유효하지 않은 토큰입니다.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="유효하지 않은 토큰입니다.",
+            detail="인증 중 오류가 발생했습니다.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    # TODO: DB에서 사용자 조회
-    # user = await crud.user.get(db, id=user_id)
-    # if user is None:
-    #     raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
-
-    return DUMMY_USER
 
 
 async def get_current_user_optional(

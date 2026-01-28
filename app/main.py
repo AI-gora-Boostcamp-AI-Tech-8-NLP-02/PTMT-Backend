@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.crud.supabase_client import get_supabase_auth_client, get_supabase_client
 from app.schemas.common import ApiResponse
 
 
@@ -28,6 +29,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     print(f"🚀 Starting {settings.APP_NAME} API Server...")
     print(f"📍 Environment: {settings.APP_ENV}")
     print(f"🔗 CORS Origins: {settings.cors_origins_list}")
+    
+    # Supabase 연결 확인
+    print("🔍 Checking Supabase connection...")
+    try:
+        # Auth 클라이언트 연결 확인
+        auth_client = await get_supabase_auth_client()
+        # CRUD 클라이언트 연결 확인 (users 테이블 조회로 검증)
+        crud_client = await get_supabase_client()
+        await crud_client.table("users").select("id").limit(1).execute()
+        print("✓ Supabase connection successful")
+    except Exception as e:
+        error_msg = str(e)
+        if settings.DEBUG:
+            print(f"⚠️  Supabase connection failed: {error_msg}")
+            print("   Server will start but auth features may not work properly.")
+        else:
+            print(f"✗ Supabase connection failed: {error_msg}")
+            # 프로덕션 환경에서는 더 엄격한 처리 가능
+            # raise RuntimeError("Failed to connect to Supabase. Server cannot start.")
     
     # TODO: DB 연결
     # await database.connect()

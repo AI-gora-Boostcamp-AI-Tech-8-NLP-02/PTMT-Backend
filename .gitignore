@@ -75,3 +75,8 @@ storage/*
 # uv
 .python-version
 uv.lock
+
+grobid-0.8.2/
+pdfs/
+output/
+.gradle/
