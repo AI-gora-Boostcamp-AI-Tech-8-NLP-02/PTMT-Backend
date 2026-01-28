@@ -16,6 +16,8 @@ from app.core.config import settings
 from app.crud.errors import NotFoundError
 from app.crud.supabase_client import get_supabase_client
 from app.models.user import User
+from app.services import pdf_service
+from app.crud.users import ensure_user_exists
 
 
 async def upload_pdf_to_storage(
@@ -51,29 +53,6 @@ async def upload_pdf_to_storage(
     print(f"[PDF Upload] 공개 URL: {pdf_url}")
     
     return storage_path, pdf_url
-
-
-async def ensure_user_exists(user_id: str, email: str, name: str, avatar_url: str | None, role: str) -> None:
-    """users 테이블에 사용자가 있는지 확인하고, 없으면 에러 발생
-    
-    Args:
-        user_id: 사용자 ID
-        email: 이메일
-        name: 이름
-        avatar_url: 프로필 이미지 URL
-        role: 역할
-        
-    Raises:
-        ValueError: users 테이블에 사용자가 없는 경우
-    """
-    try:
-        await crud.users.get_user(user_id)
-    except NotFoundError:
-        # users 테이블에 사용자가 없으면 에러 발생
-        raise ValueError(
-            f"User {user_id} not found in users table. "
-            "Please ensure the user is properly registered through signup."
-        )
 
 
 async def create_curriculum_for_paper(
@@ -133,6 +112,7 @@ async def create_paper_with_curriculum(
     language: str = "english",
     source_url: str | None = None,
     pdf_storage_path: str | None = None,
+    extracted_text: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Paper와 빈 Curriculum을 생성하고 모든 관계를 연결
     
@@ -146,6 +126,7 @@ async def create_paper_with_curriculum(
         language: 언어
         source_url: 원본 URL (선택)
         pdf_storage_path: Storage 경로 (선택)
+        extracted_text: 추출된 본문 텍스트 (선택)
         
     Returns:
         (paper, curriculum) 튜플
@@ -158,6 +139,7 @@ async def create_paper_with_curriculum(
         language=language,
         source_url=source_url,
         pdf_storage_path=pdf_storage_path,
+        extracted_text=extracted_text,
     )
     print(f"[Paper Service] Paper 생성 완료: {paper['id']}")
     
@@ -209,12 +191,32 @@ async def process_pdf_upload(
         filename=filename,
     )
     
-    # 2. PDF 텍스트 추출 (TODO: 실제 구현)
-    print(f"[PDF Text Extraction] PDF 텍스트 추출 시작: {filename}")
-    print(f"[PDF Text Extraction] 파일 크기: {len(contents)} bytes")
-    # TODO: 실제 PDF 텍스트 추출 구현
-    # extracted_text = await pdf_service.extract_text(contents)
-    # print(f"[PDF Text Extraction] 추출된 텍스트 길이: {len(extracted_text)} characters")
+    # 2. PDF 텍스트 및 메타데이터 추출 (GROBID 사용)
+    print(f"[PDF Processing] PDF 처리 시작: {filename}")
+    print(f"[PDF Processing] 파일 크기: {len(contents)} bytes")
+    
+    try:
+        # 2-1. GROBID로 메타데이터 추출
+        print(f"[PDF Processing] 메타데이터 추출 중...")
+        metadata = await pdf_service.extract_metadata(contents)
+        print(f"[PDF Processing] 제목: {metadata['title']}")
+        print(f"[PDF Processing] 저자: {len(metadata['authors'])}명")
+        
+        # 2-2. GROBID로 본문 텍스트 추출
+        print(f"[PDF Processing] 본문 텍스트 추출 중...")
+        extracted_text = await pdf_service.extract_text(contents)
+        print(f"[PDF Processing] 추출된 텍스트 길이: {len(extracted_text)} characters")
+        
+    except Exception as e:
+        print(f"[PDF Processing] GROBID 처리 실패: {e}")
+        # 폴백: 기본 메타데이터 사용
+        extracted_text = ""
+        metadata = {
+            "title": filename.replace(".pdf", ""),
+            "authors": ["Unknown Author"],
+            "abstract": "",
+            "keywords": []
+        }
     
     # 3. AI로 키워드 추출 (TODO: 실제 구현)
     print(f"[AI Keyword Extraction] AI 키워드 추출 시작")
@@ -222,7 +224,7 @@ async def process_pdf_upload(
     # keywords = await ai_service.extract_keywords(extracted_text)
     # print(f"[AI Keyword Extraction] 추출된 키워드: {keywords}")
     
-    # 4. users 테이블에 사용자가 있는지 확인하고, 없으면 생성
+    # 4. users 테이블에 사용자가 있는지 확인하
     await ensure_user_exists(
         user_id=user_id,
         email=user_email,
@@ -232,15 +234,20 @@ async def process_pdf_upload(
     )
     
     # 5. Paper와 Curriculum 생성 및 연결
-    paper_title = filename.replace(".pdf", "") if filename else "Unknown Paper"
+    # GROBID에서 추출한 메타데이터 사용
+    paper_title = metadata.get("title") or filename.replace(".pdf", "")
+    paper_authors = metadata.get("authors") or ["Unknown Author"]
+    paper_abstract = metadata.get("abstract") or "초록을 추출할 수 없습니다."
+    
     paper, curriculum = await create_paper_with_curriculum(
         user_id=user_id,
         title=paper_title,
-        authors=["Unknown Author"],  # TODO: PDF에서 추출
-        abstract="AI가 논문을 분석하여 핵심 개념을 추출했습니다. (더미 데이터)",
+        authors=paper_authors,
+        abstract=paper_abstract,
         language="english",
         source_url=None,
         pdf_storage_path=storage_path,
+        extracted_text=extracted_text,  # 추출된 텍스트 저장
     )
     
     return paper, curriculum, pdf_url
