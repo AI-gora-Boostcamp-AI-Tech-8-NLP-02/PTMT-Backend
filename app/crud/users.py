@@ -160,3 +160,26 @@ async def delete_user(user_id: str) -> None:
     # If delete returns representation, resp.data will contain deleted rows.
     _ = resp
 
+
+async def ensure_user_exists(user_id: str, email: str, name: str, avatar_url: str | None, role: str) -> None:
+    """users 테이블에 사용자가 있는지 확인하고, 없으면 에러 발생
+    
+    Args:
+        user_id: 사용자 ID
+        email: 이메일
+        name: 이름
+        avatar_url: 프로필 이미지 URL
+        role: 역할
+        
+    Raises:
+        ValueError: users 테이블에 사용자가 없는 경우
+    """
+    try:
+        await get_user(user_id)
+    except NotFoundError:
+        # users 테이블에 사용자가 없으면 에러 발생
+        raise ValueError(
+            f"User {user_id} not found in users table. "
+            "Please ensure the user is properly registered through signup."
+        )
+
