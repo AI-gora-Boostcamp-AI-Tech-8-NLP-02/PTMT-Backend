@@ -20,6 +20,7 @@ async def create_paper(
     language: str = "english",
     source_url: Optional[str] = None,
     pdf_storage_path: Optional[str] = None,
+    extracted_text: Optional[str] = None,
 ) -> dict[str, Any]:
     client = await get_supabase_client()
     payload: dict[str, Any] = {
@@ -29,6 +30,7 @@ async def create_paper(
         "language": language,
         "source_url": source_url,
         "pdf_storage_path": pdf_storage_path,
+        "extracted_text": extracted_text,
     }
     try:
         resp = await client.table("papers").insert(payload).execute()
