@@ -3,6 +3,7 @@
 from functools import lru_cache
 from typing import List
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,6 +51,14 @@ class Settings(BaseSettings):
     # 파일 업로드 설정
     MAX_UPLOAD_SIZE_MB: int = 25
     STORAGE_PATH: str = "./storage"
+
+    # 커리큘럼 생성 API (외부 서비스)
+    CURRICULUM_GENERATION_API_URL: str = "http://curr.ptmt.site"
+    CURRICULUM_GENERATION_API_TOKEN: str = Field(default="", env="CURRICULUM_GENERATION_API_TOKEN")
+    
+    # 키워드 추출 API (외부 서비스)
+    KEYWORD_EXTRACTION_API_URL: str = "http://curr.ptmt.site"
+    KEYWORD_EXTRACTION_API_TOKEN: str =  Field(default="", env="KEYWORD_EXTRACTION_API_TOKEN:")
 
     @property
     def max_upload_size_bytes(self) -> int:
