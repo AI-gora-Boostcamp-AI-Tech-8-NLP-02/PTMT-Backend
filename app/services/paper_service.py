@@ -314,7 +314,6 @@ async def process_pdf_upload(
                 resp = await client.post(keyword_api_url, json=body, headers=headers)
                 resp.raise_for_status()
                 result = resp.json()
-                
                 keywords = result.get("keywords", [])
                 summary = result.get("summary")
                 print(f"[AI Keyword Extraction] 추출된 키워드: {keywords}")
@@ -327,6 +326,7 @@ async def process_pdf_upload(
                     summary=summary,
                 )
                 print(f"[AI Keyword Extraction] Paper 업데이트 완료")
+                paper["keywords"] = keywords
         else:
             print(f"[AI Keyword Extraction] API 설정이 없거나 추출된 텍스트가 없어 건너뜁니다.")
     except Exception as e:
