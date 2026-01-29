@@ -6,10 +6,13 @@ For now, API routes call these async stubs without implementing details.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
+
+import httpx
 
 from app import crud
 from app.core.config import settings
@@ -218,12 +221,6 @@ async def process_pdf_upload(
             "keywords": []
         }
     
-    # 3. AI로 키워드 추출 (TODO: 실제 구현)
-    print(f"[AI Keyword Extraction] AI 키워드 추출 시작")
-    # TODO: 실제 AI 키워드 추출 구현
-    # keywords = await ai_service.extract_keywords(extracted_text)
-    # print(f"[AI Keyword Extraction] 추출된 키워드: {keywords}")
-    
     # 4. users 테이블에 사용자가 있는지 확인하
     await ensure_user_exists(
         user_id=user_id,
@@ -232,9 +229,13 @@ async def process_pdf_upload(
         avatar_url=user_avatar_url,
         role=user_role,
     )
+
+    # 3. AI로 키워드 추출
+    print(f"[AI Keyword Extraction] AI 키워드 추출 시작")
+    keywords: list[str] = []
+    summary: str | None = None
     
-    # 5. Paper와 Curriculum 생성 및 연결
-    # GROBID에서 추출한 메타데이터 사용
+    # Paper를 먼저 생성하여 paper_id를 얻음
     paper_title = metadata.get("title") or filename.replace(".pdf", "")
     paper_authors = metadata.get("authors") or ["Unknown Author"]
     paper_abstract = metadata.get("abstract") or "초록을 추출할 수 없습니다."
@@ -247,9 +248,92 @@ async def process_pdf_upload(
         language="english",
         source_url=None,
         pdf_storage_path=storage_path,
-        extracted_text=extracted_text,  # 추출된 텍스트 저장
+        extracted_text=extracted_text,
     )
+
+    paper_id = str(paper["id"])
     
+    # 키워드 추출 API 호출
+    try:
+        api_url = (settings.KEYWORD_EXTRACTION_API_URL or "").rstrip("/")
+        token = (settings.KEYWORD_EXTRACTION_API_TOKEN or "").strip()
+        
+        if api_url and token and extracted_text:
+            keyword_api_url = f"{api_url}/api/curr/keywords/extract"
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+            
+            # extracted_text가 JSON 형식일 경우 body 필드 추출
+            paper_body = []
+            if extracted_text:
+                try:
+                    # extracted_text가 JSON 문자열인 경우 파싱
+                    if isinstance(extracted_text, str):
+                        parsed_text = json.loads(extracted_text)
+                        paper_body = parsed_text.get("body", [])
+                    # 이미 딕셔너리인 경우
+                    elif isinstance(extracted_text, dict):
+                        paper_body = extracted_text.get("body", [])
+                    # 그 외의 경우 원본 텍스트를 그대로 사용
+                    else:
+                        paper_body = [
+                            {
+                                "subtitle": "Full Text",
+                                "text": str(extracted_text),
+                            }
+                        ]
+                except (json.JSONDecodeError, AttributeError):
+                    # JSON 파싱 실패 시 원본 텍스트를 그대로 사용
+                    paper_body = [
+                        {
+                            "subtitle": "Full Text",
+                            "text": extracted_text,
+                        }
+                    ]
+            
+            # paper_content 구조 생성
+            paper_content = {
+                "title": paper_title,
+                "author": ", ".join(paper_authors) if paper_authors else "",
+                "abstract": paper_abstract,
+                "body": paper_body,
+            }
+            
+            body = {
+                "paper_id": paper_id,
+                "paper_content": paper_content,
+            }
+
+            print(headers)
+            print(body)
+            
+            print(f"[AI Keyword Extraction] API 호출: {keyword_api_url}")
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(keyword_api_url, json=body, headers=headers)
+                resp.raise_for_status()
+                result = resp.json()
+                
+                keywords = result.get("keywords", [])
+                summary = result.get("summary")
+                print(f"[AI Keyword Extraction] 추출된 키워드: {keywords}")
+                print(f"[AI Keyword Extraction] 요약: {summary[:100] if summary else 'None'}...")
+                
+                # Paper 테이블에 keywords와 summary 업데이트
+                await crud.papers.update_paper(
+                    paper_id=paper_id,
+                    keywords=keywords,
+                    summary=summary,
+                )
+                print(f"[AI Keyword Extraction] Paper 업데이트 완료")
+        else:
+            print(f"[AI Keyword Extraction] API 설정이 없거나 추출된 텍스트가 없어 건너뜁니다.")
+    except Exception as e:
+        print(f"[AI Keyword Extraction] 키워드 추출 실패: {e}")
+        # 실패해도 계속 진행
+    
+    # Paper와 Curriculum은 이미 생성되었으므로 반환만 함
     return paper, curriculum, pdf_url
 
 

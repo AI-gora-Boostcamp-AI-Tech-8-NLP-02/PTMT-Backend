@@ -161,7 +161,7 @@ async def upload_pdf(
                 authors=paper.get("authors") or ["Unknown Author"],
                 abstract=paper.get("abstract") or "AI가 논문을 분석하여 핵심 개념을 추출했습니다. (더미 데이터)",
                 language=paper.get("language") or "english",
-                keywords=DUMMY_KEYWORDS,
+                keywords=paper.get("keywords") or [],
                 pdf_url=pdf_url,
             )
         )
