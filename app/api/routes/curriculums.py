@@ -21,6 +21,8 @@ from app.schemas.curriculum import (
     CurriculumEdge,
     CurriculumGraphMeta,
     CurriculumGraphResponse,
+    CurriculumImportRequest,
+    CurriculumImportResponse,
     CurriculumListItem,
     CurriculumListResponse,
     CurriculumNode,
@@ -453,13 +455,43 @@ async def start_generation(
         )
     except NotFoundError:
         return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
-    await curriculum_generation_service.start_generation(curriculum_id)
-    return ApiResponse.ok(
-        GenerationStartResponse(
-            curriculum_id=curriculum_id,
-            status="generating",
+    
+    # 외부 API 호출
+    try:
+        result = await curriculum_generation_service.start_generation(curriculum_id)
+        
+        # 결과 확인: curriculum_id가 일치하고 success가 true이고 status가 generating이면
+        if result:
+            result_curr_id = result.get("curriculum_id") or result.get("curr_id")
+            result_success = result.get("success")
+            result_status = result.get("status")
+            
+            if (
+                result_curr_id == curriculum_id
+                and result_success is True
+                and result_status == "generating"
+            ):
+                return ApiResponse.ok(
+                    GenerationStartResponse(
+                        curriculum_id=curriculum_id,
+                        status="generating",
+                    )
+                )
+        
+        # 조건에 맞지 않으면 실패 처리
+        await crud.curriculums.update_curriculum(curriculum_id, status="failed")
+        return ApiResponse.fail(
+            "GENERATION_FAILED",
+            "커리큘럼 생성 시작에 실패했습니다. 외부 API 응답이 올바르지 않습니다.",
         )
-    )
+        
+    except Exception as e:
+        # 외부 API 호출 실패 시
+        await crud.curriculums.update_curriculum(curriculum_id, status="failed")
+        return ApiResponse.fail(
+            "GENERATION_FAILED",
+            f"커리큘럼 생성 시작에 실패했습니다: {str(e)}",
+        )
 
 
 @router.get("/{curriculum_id}/status", response_model=ApiResponse[GenerationStatusResponse])
@@ -468,13 +500,40 @@ async def check_status(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[GenerationStatusResponse]:
     """생성 상태 확인 (폴링용)"""
-    await curriculum_generation_service.get_generation_status(curriculum_id)
+    try:
+        curriculum = await crud.curriculums.get_curriculum(curriculum_id)
+    except CrudConfigError:
+        return ApiResponse.fail(
+            "DB_NOT_CONFIGURED",
+            "DB 설정이 필요합니다. (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+        )
+    except NotFoundError:
+        return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
+    
+    # DB에서 가져온 상태 매핑
+    db_status = curriculum.get("status", "draft")
+    api_status = _map_status_to_api(db_status)
+    
+    # 상태에 따른 단계 설정
+    current_step = "초기화 중"
+    
+    if api_status == CurriculumStatus.DRAFT:
+        current_step = "논문 업로드 완료"
+    elif api_status == CurriculumStatus.OPTIONS_SAVED:
+        current_step = "옵션 설정 완료"
+    elif api_status == CurriculumStatus.GENERATING:
+        current_step = "AI가 커리큘럼을 생성하는 중..."
+    elif api_status == CurriculumStatus.READY:
+        current_step = "완료!"
+    elif api_status == CurriculumStatus.FAILED:
+        current_step = "생성 실패"
+    
     return ApiResponse.ok(
         GenerationStatusResponse(
             curriculum_id=curriculum_id,
-            status=CurriculumStatus.READY,
-            progress_percent=100,
-            current_step="완료!",
+            status=api_status,
+            progress_percent=None,
+            current_step=current_step,
         )
     )
 
@@ -485,20 +544,209 @@ async def get_graph(
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[CurriculumGraphResponse]:
     """커리큘럼 그래프 조회"""
-    await curriculum_generation_service.get_graph(curriculum_id)
+    try:
+        curriculum = await crud.curriculums.get_curriculum(curriculum_id)
+    except CrudConfigError:
+        return ApiResponse.fail(
+            "DB_NOT_CONFIGURED",
+            "DB 설정이 필요합니다. (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+        )
+    except NotFoundError:
+        return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
+    
+    # graph_data 확인
+    graph_data = curriculum.get("graph_data")
+    if not graph_data or not isinstance(graph_data, dict):
+        return ApiResponse.fail(
+            "GRAPH_NOT_READY",
+            "커리큘럼 그래프가 아직 생성되지 않았습니다.",
+        )
+    
+    # Paper 정보 조회
+    paper_id = "unknown"
+    paper_title = "Unknown Paper"
+    paper_authors = []
+    
+    try:
+        linked_papers, _ = await crud.papers.get_paper_by_curr(
+            curriculum_id=curriculum_id, page=1, limit=1
+        )
+        if linked_papers:
+            p = linked_papers[0]
+            paper_id = str(p.get("id", "unknown"))
+            paper_title = str(p.get("title") or "Unknown Paper")
+            paper_authors = p.get("authors") or []
+    except Exception:
+        pass
+    
+    # 그래프 데이터 파싱
+    nodes_data = graph_data.get("nodes", [])
+    edges_data = graph_data.get("edges", [])
+    
+    # 노드 파싱
+    nodes = []
+    for node_dict in nodes_data:
+        if not isinstance(node_dict, dict):
+            continue
+        
+        # 리소스 파싱
+        resources = []
+        for res_dict in node_dict.get("resources", []):
+            if not isinstance(res_dict, dict):
+                continue
+            try:
+                resources.append(
+                    Resource(
+                        resource_id=str(res_dict.get("resource_id", "")),
+                        name=str(res_dict.get("name", "")),
+                        url=res_dict.get("url"),
+                        type=ResourceType(res_dict.get("type", "article")),
+                        description=str(res_dict.get("description", "")),
+                        difficulty=int(res_dict.get("difficulty", 5)),
+                        importance=int(res_dict.get("importance", 5)),
+                        study_load_minutes=int(res_dict.get("study_load_minutes", 0)),
+                        is_core=bool(res_dict.get("is_core", False)),
+                    )
+                )
+            except Exception:
+                continue
+        
+        try:
+            nodes.append(
+                CurriculumNode(
+                    keyword_id=str(node_dict.get("keyword_id", "")),
+                    keyword=str(node_dict.get("keyword", "")),
+                    description=str(node_dict.get("description", "")),
+                    importance=int(node_dict.get("importance", 5)),
+                    layer=node_dict.get("layer"),
+                    resources=resources,
+                )
+            )
+        except Exception:
+            continue
+    
+    # 엣지 파싱
+    edges = []
+    for edge_dict in edges_data:
+        if not isinstance(edge_dict, dict):
+            continue
+        try:
+            edges.append(
+                CurriculumEdge(
+                    from_keyword_id=str(edge_dict.get("from_keyword_id", "")),
+                    to_keyword_id=str(edge_dict.get("to_keyword_id", "")),
+                    relationship=str(edge_dict.get("relationship", "prerequisite")),
+                )
+            )
+        except Exception:
+            continue
+    
+    # 메타 정보 계산
+    total_study_time_hours = float(curriculum.get("estimated_hours", 0.0))
+    total_nodes = len(nodes)
+    
     return ApiResponse.ok(
         CurriculumGraphResponse(
             meta=CurriculumGraphMeta(
                 curriculum_id=curriculum_id,
-                paper_id="paper-1",
-                paper_title="Attention Is All You Need",
-                paper_authors=["Vaswani et al."],
-                created_at=datetime(2024, 1, 20, 10, 30),
-                total_study_time_hours=24.5,
-                total_nodes=len(DUMMY_GRAPH_NODES),
+                paper_id=paper_id,
+                paper_title=paper_title,
+                paper_authors=paper_authors,
+                created_at=curriculum.get("created_at") or datetime.utcnow(),
+                total_study_time_hours=total_study_time_hours,
+                total_nodes=total_nodes,
             ),
-            nodes=DUMMY_GRAPH_NODES,
-            edges=DUMMY_GRAPH_EDGES,
+            nodes=nodes,
+            edges=edges,
+        )
+    )
+
+
+@router.post(
+    "/import",
+    response_model=ApiResponse[CurriculumImportResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_curriculum(
+    request: CurriculumImportRequest,
+    current_user: UserResponse = Depends(get_current_user),
+) -> ApiResponse[CurriculumImportResponse]:
+    """커리큘럼 그래프 import
+    
+    외부에서 생성된 커리큘럼 그래프를 DB에 저장합니다.
+    
+    1. curriculum_id로 커리큘럼 조회
+    2. graph 데이터를 graph_data 필드에 저장
+    3. 상태를 ready로 변경
+    4. 노드 수와 예상 학습 시간 계산 (선택적)
+    """
+    try:
+        # curriculum_id로 커리큘럼 조회
+        curriculum = await crud.curriculums.get_curriculum(request.curriculum_id)
+    except CrudConfigError:
+        return ApiResponse.fail(
+            "DB_NOT_CONFIGURED",
+            "DB 설정이 필요합니다. (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+        )
+    except NotFoundError:
+        return ApiResponse.fail(
+            "CURRICULUM_NOT_FOUND",
+            f"커리큘럼을 찾을 수 없습니다: {request.curriculum_id}",
+        )
+    
+    # 필수 필드 확인
+    if not request.graph:
+        return ApiResponse.fail(
+            "INVALID_REQUEST",
+            "curriculum_id, graph는 필수입니다.",
+        )
+    
+    # 노드 수 계산
+    nodes = request.graph.get("nodes", [])
+    node_count = len(nodes) if isinstance(nodes, list) else 0
+    
+    # 예상 학습 시간 계산 (선택적)
+    estimated_hours = 0.0
+    if isinstance(nodes, list):
+        for node in nodes:
+            if isinstance(node, dict):
+                resources = node.get("resources", [])
+                if isinstance(resources, list):
+                    for resource in resources:
+                        if isinstance(resource, dict):
+                            minutes = resource.get("study_load_minutes", 0)
+                            estimated_hours += minutes / 60.0
+    
+    # graph 데이터 저장 및 상태 업데이트
+    try:
+        await crud.curriculums.update_curriculum(
+            request.curriculum_id,
+            title=request.title,
+            graph_data=request.graph,
+            status="ready",
+            node_count=node_count,
+            estimated_hours=estimated_hours,
+        )
+    except CrudConfigError:
+        return ApiResponse.fail(
+            "DB_NOT_CONFIGURED",
+            "DB 설정이 필요합니다. (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+        )
+    except NotFoundError:
+        return ApiResponse.fail(
+            "CURRICULUM_NOT_FOUND",
+            f"커리큘럼을 찾을 수 없습니다: {request.curriculum_id}",
+        )
+    except Exception as e:
+        return ApiResponse.fail(
+            "INTERNAL_SERVER_ERROR",
+            f"서버 오류가 발생했습니다: {str(e)}",
+        )
+    
+    return ApiResponse.ok(
+        CurriculumImportResponse(
+            curriculum_id=request.curriculum_id,
+            status="ready",
         )
     )
 

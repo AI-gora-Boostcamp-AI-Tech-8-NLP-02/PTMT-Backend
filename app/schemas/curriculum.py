@@ -67,6 +67,14 @@ class CurriculumOptions(BaseModel):
     preferred_resources: List[ResourceType]
 
 
+class CurriculumImportRequest(BaseModel):
+    """커리큘럼 import 요청"""
+    curriculum_id: str
+    title: str
+    graph: dict  # nodes, edges 포함
+    created_at: str
+
+
 # ===========================================
 # Response Schemas
 # ===========================================
@@ -123,6 +131,12 @@ class GenerationStatusResponse(BaseModel):
     status: CurriculumStatus
     progress_percent: float
     current_step: str
+
+
+class CurriculumImportResponse(BaseModel):
+    """커리큘럼 import 응답"""
+    curriculum_id: str
+    status: str = "ready"
 
 
 # ===========================================

@@ -153,6 +153,15 @@ async def upload_pdf(
         
         paper_title = file.filename.replace(".pdf", "") if file.filename else "Unknown Paper"
         
+        # 키워드 데이터 처리: 문자열 리스트인 경우 Keyword 객체 리스트로 변환
+        keywords_data = paper.get("keywords") or []
+        keywords_response = []
+        if keywords_data:
+            if isinstance(keywords_data[0], str):
+                keywords_response = [Keyword(name=k) for k in keywords_data]
+            else:
+                keywords_response = keywords_data
+
         return ApiResponse.ok(
             PaperUploadResponse(
                 paper_id=str(paper["id"]),
@@ -161,7 +170,7 @@ async def upload_pdf(
                 authors=paper.get("authors") or ["Unknown Author"],
                 abstract=paper.get("abstract") or "AI가 논문을 분석하여 핵심 개념을 추출했습니다. (더미 데이터)",
                 language=paper.get("language") or "english",
-                keywords=DUMMY_KEYWORDS,
+                keywords=keywords_response,
                 pdf_url=pdf_url,
             )
         )

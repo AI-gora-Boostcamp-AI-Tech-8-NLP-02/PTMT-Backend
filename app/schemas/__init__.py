@@ -28,6 +28,8 @@ from app.schemas.curriculum import (
     GenerationStartResponse,
     GenerationStatusResponse,
     CurriculumGraphResponse,
+    CurriculumImportRequest,
+    CurriculumImportResponse,
 )
 
 __all__ = [
@@ -59,4 +61,6 @@ __all__ = [
     "GenerationStartResponse",
     "GenerationStatusResponse",
     "CurriculumGraphResponse",
+    "CurriculumImportRequest",
+    "CurriculumImportResponse",
 ]

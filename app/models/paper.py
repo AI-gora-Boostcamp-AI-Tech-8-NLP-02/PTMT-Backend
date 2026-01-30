@@ -30,4 +30,6 @@ class Paper(SQLModel, table=True):
     doi: Optional[str] = Field(default=None, max_length=100)
     pdf_storage_path: Optional[str] = Field(default=None)
     extracted_text: Optional[str] = Field(default=None)
+    keywords: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(String)))
+    summary: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
