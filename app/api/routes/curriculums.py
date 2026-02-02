@@ -462,15 +462,9 @@ async def start_generation(
         
         # 결과 확인: curriculum_id가 일치하고 success가 true이고 status가 generating이면
         if result:
-            result_curr_id = result.get("curriculum_id") or result.get("curr_id")
             result_success = result.get("success")
-            result_status = result.get("status")
             
-            if (
-                result_curr_id == curriculum_id
-                and result_success is True
-                and result_status == "generating"
-            ):
+            if (result_success is True):
                 return ApiResponse.ok(
                     GenerationStartResponse(
                         curriculum_id=curriculum_id,
