@@ -653,7 +653,7 @@ async def get_graph(
     total_minutes = sum(
         r.study_load_minutes for n in nodes for r in n.resources
     )
-    total_study_time_hours = total_minutes / 60.0
+    total_study_time_hours = total_minutes
     total_nodes = len(nodes)
     
     return ApiResponse.ok(
