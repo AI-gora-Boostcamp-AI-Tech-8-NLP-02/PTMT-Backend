@@ -129,7 +129,7 @@ class GenerationStatusResponse(BaseModel):
     """커리큘럼 생성 상태 응답"""
     curriculum_id: str
     status: CurriculumStatus
-    progress_percent: float
+    progress_percent: float | None = None  # 진행률 미지원 시 None
     current_step: str
 
 
