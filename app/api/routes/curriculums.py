@@ -607,7 +607,7 @@ async def get_graph(
                         resource_id=str(res_dict.get("resource_id", "")),
                         is_core=bool(res_dict.get("is_necessary", False)),
                         name=str(res_dict.get("resource_name", "")),
-                        description=str(res_dict.get("description", "")),
+                        description=str(res_dict.get("resource_description", "")),
                     )
                 )
             except Exception:
