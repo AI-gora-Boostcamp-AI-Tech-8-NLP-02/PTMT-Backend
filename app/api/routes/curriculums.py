@@ -575,7 +575,7 @@ async def get_graph(
             paper_id = str(p.get("id", "unknown"))
             paper_title = str(p.get("title") or "Unknown Paper")
             paper_authors = p.get("authors") or []
-            summarize = p.get("summarize") or "Unknown Summary"
+            summarize = p.get("summary") or "Unknown Summary"
     except Exception:
         pass
 
