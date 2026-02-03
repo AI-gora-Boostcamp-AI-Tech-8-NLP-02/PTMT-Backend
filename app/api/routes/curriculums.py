@@ -650,8 +650,10 @@ async def get_graph(
         except Exception:
             continue
     
-    # 메타 정보 계산
-    total_study_time_hours = float(curriculum.get("estimated_hours", 0.0))
+    total_minutes = sum(
+        r.study_load_minutes for n in nodes for r in n.resources
+    )
+    total_study_time_hours = total_minutes / 60.0
     total_nodes = len(nodes)
     
     return ApiResponse.ok(
