@@ -87,7 +87,8 @@ DUMMY_GRAPH_NODES = [
         keyword="선형대수",
         description="행렬 연산과 벡터 공간의 기초",
         importance=8,
-        layer=1,
+        is_keyword_necessary=True,
+        is_resource_sufficient=True,
         resources=[
             Resource(
                 resource_id="res-1",
@@ -107,7 +108,8 @@ DUMMY_GRAPH_NODES = [
         keyword="신경망 기초",
         description="인공 신경망의 기본 구조와 학습 방법",
         importance=9,
-        layer=2,
+        is_keyword_necessary=True,
+        is_resource_sufficient=True,
         resources=[
             Resource(
                 resource_id="res-2",
@@ -127,7 +129,8 @@ DUMMY_GRAPH_NODES = [
         keyword="Attention Mechanism",
         description="시퀀스 모델링에서의 어텐션 메커니즘",
         importance=10,
-        layer=3,
+        is_keyword_necessary=True,
+        is_resource_sufficient=True,
         resources=[
             Resource(
                 resource_id="res-3",
@@ -147,7 +150,8 @@ DUMMY_GRAPH_NODES = [
         keyword="Transformer",
         description="Self-Attention 기반 시퀀스 모델",
         importance=10,
-        layer=4,
+        is_keyword_necessary=True,
+        is_resource_sufficient=True,
         resources=[
             Resource(
                 resource_id="res-4",
