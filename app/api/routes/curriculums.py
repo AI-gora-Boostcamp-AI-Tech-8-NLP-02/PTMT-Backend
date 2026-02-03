@@ -169,9 +169,9 @@ DUMMY_GRAPH_NODES = [
 ]
 
 DUMMY_GRAPH_EDGES = [
-    CurriculumEdge(from_keyword_id="node-linear-algebra", to_keyword_id="node-neural-network", relationship="prerequisite"),
-    CurriculumEdge(from_keyword_id="node-neural-network", to_keyword_id="node-attention", relationship="prerequisite"),
-    CurriculumEdge(from_keyword_id="node-attention", to_keyword_id="node-transformer", relationship="prerequisite"),
+    CurriculumEdge(start_keyword_id="node-linear-algebra", end_keyword_id="node-neural-network"),
+    CurriculumEdge(start_keyword_id="node-neural-network", end_keyword_id="node-attention"),
+    CurriculumEdge(start_keyword_id="node-attention", end_keyword_id="node-transformer"),
 ]
 
 
