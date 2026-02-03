@@ -597,20 +597,26 @@ async def get_graph(
             if not isinstance(res_dict, dict):
                 continue
             try:
+                raw_study = res_dict.get("study_load", 0)
+                study_minutes = int(round(float(raw_study))) if raw_study not in (None, "") else 0
+                raw_difficulty = res_dict.get("difficulty", 5)
+                raw_importance = res_dict.get("importance", 5)
+                difficulty = int(round(float(raw_difficulty))) if raw_difficulty not in (None, "") else 5
+                importance = int(round(float(raw_importance))) if raw_importance not in (None, "") else 5
                 resources.append(
                     Resource(
                         url=res_dict.get("url"),
                         type=ResourceType(res_dict.get("type", "article")),
-                        difficulty=int(res_dict.get("difficulty", 5)),
-                        importance=int(res_dict.get("importance", 5)),
-                        study_load_minutes=int(res_dict.get("study_load", 0)),
+                        difficulty=difficulty,
+                        importance=importance,
+                        study_load_minutes=study_minutes,
                         resource_id=str(res_dict.get("resource_id", "")),
                         is_core=bool(res_dict.get("is_necessary", False)),
-                        name=str(res_dict.get("resource_name", "")),
-                        description=str(res_dict.get("resource_description", "")),
+                        name=str(res_dict.get("resource_name", res_dict.get("name", "")) or ""),
+                        description=str(res_dict.get("resource_description", res_dict.get("description", "")) or ""),
                     )
                 )
-            except Exception:
+            except (ValueError, TypeError):
                 continue
         
         try:
