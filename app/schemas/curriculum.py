@@ -46,6 +46,7 @@ class ResourceType(str, Enum):
     ARTICLE = "article"
     VIDEO = "video"
     CODE = "code"
+    WEB_DOC = "web_doc"
 
 
 # ===========================================
