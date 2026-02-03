@@ -150,9 +150,9 @@ class Resource(BaseModel):
     url: Optional[str] = None
     type: ResourceType
     description: str
-    difficulty: int  # 1-10
-    importance: int  # 1-10
-    study_load_minutes: int
+    difficulty: float  # 1-10
+    importance: float  # 1-10
+    study_load_minutes: float
     is_core: bool
 
 

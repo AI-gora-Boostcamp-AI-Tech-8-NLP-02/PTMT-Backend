@@ -598,11 +598,11 @@ async def get_graph(
                 continue
             try:
                 raw_study = res_dict.get("study_load", 0)
-                study_minutes = int(round(float(raw_study))) if raw_study not in (None, "") else 0
+                study_minutes = float(raw_study)
                 raw_difficulty = res_dict.get("difficulty", 5)
                 raw_importance = res_dict.get("importance", 5)
-                difficulty = int(round(float(raw_difficulty))) if raw_difficulty not in (None, "") else 5
-                importance = int(round(float(raw_importance))) if raw_importance not in (None, "") else 5
+                difficulty = float(raw_difficulty) 
+                importance = float(raw_importance) 
                 resources.append(
                     Resource(
                         url=res_dict.get("url"),
@@ -617,6 +617,7 @@ async def get_graph(
                     )
                 )
             except (ValueError, TypeError):
+                print(f"Error parsing resource: {res_dict}")
                 continue
         
         try:
