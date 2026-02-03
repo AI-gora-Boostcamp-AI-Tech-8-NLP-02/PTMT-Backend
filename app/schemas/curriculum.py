@@ -162,15 +162,15 @@ class CurriculumNode(BaseModel):
     keyword: str
     description: str
     importance: int
-    layer: Optional[int] = None
+    is_keyword_necessary: bool
+    is_resource_sufficient: bool
     resources: List[Resource]
 
 
 class CurriculumEdge(BaseModel):
     """커리큘럼 그래프 엣지"""
-    from_keyword_id: str
-    to_keyword_id: str
-    relationship: str = "prerequisite"
+    end_keyword_id: str
+    start_keyword_id: str
 
 
 class CurriculumGraphMeta(BaseModel):
@@ -179,13 +179,14 @@ class CurriculumGraphMeta(BaseModel):
     paper_id: str
     paper_title: str
     paper_authors: Optional[List[str]] = None
+    summarize: str
     created_at: datetime
     total_study_time_hours: float
     total_nodes: int
-
 
 class CurriculumGraphResponse(BaseModel):
     """커리큘럼 그래프 응답"""
     meta: CurriculumGraphMeta
     nodes: List[CurriculumNode]
     edges: List[CurriculumEdge]
+    first_node_order: List[str]

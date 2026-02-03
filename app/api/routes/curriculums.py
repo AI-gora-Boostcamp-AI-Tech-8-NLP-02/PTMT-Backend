@@ -556,26 +556,30 @@ async def get_graph(
             "커리큘럼 그래프가 아직 생성되지 않았습니다.",
         )
     
-    # Paper 정보 조회
     paper_id = "unknown"
     paper_title = "Unknown Paper"
     paper_authors = []
+    summarize = "Unknown Summary"
     
     try:
         linked_papers, _ = await crud.papers.get_paper_by_curr(
             curriculum_id=curriculum_id, page=1, limit=1
         )
+        print(linked_papers[0].keys())
         if linked_papers:
             p = linked_papers[0]
             paper_id = str(p.get("id", "unknown"))
             paper_title = str(p.get("title") or "Unknown Paper")
             paper_authors = p.get("authors") or []
+            summarize = p.get("summarize") or "Unknown Summary"
     except Exception:
         pass
-    
+
+
     # 그래프 데이터 파싱
     nodes_data = graph_data.get("nodes", [])
     edges_data = graph_data.get("edges", [])
+    first_node_order = graph_data.get("first_node_order", [])
     
     # 노드 파싱
     nodes = []
@@ -591,15 +595,15 @@ async def get_graph(
             try:
                 resources.append(
                     Resource(
-                        resource_id=str(res_dict.get("resource_id", "")),
-                        name=str(res_dict.get("name", "")),
                         url=res_dict.get("url"),
                         type=ResourceType(res_dict.get("type", "article")),
-                        description=str(res_dict.get("description", "")),
                         difficulty=int(res_dict.get("difficulty", 5)),
                         importance=int(res_dict.get("importance", 5)),
                         study_load_minutes=int(res_dict.get("study_load_minutes", 0)),
-                        is_core=bool(res_dict.get("is_core", False)),
+                        resource_id=str(res_dict.get("resource_id", "")),
+                        is_core=bool(res_dict.get("is_necessary", False)),
+                        name=str(res_dict.get("resource_name", "")),
+                        description=str(res_dict.get("description", "")),
                     )
                 )
             except Exception:
@@ -608,12 +612,13 @@ async def get_graph(
         try:
             nodes.append(
                 CurriculumNode(
-                    keyword_id=str(node_dict.get("keyword_id", "")),
                     keyword=str(node_dict.get("keyword", "")),
-                    description=str(node_dict.get("description", "")),
-                    importance=int(node_dict.get("importance", 5)),
-                    layer=node_dict.get("layer"),
                     resources=resources,
+                    keyword_id=str(node_dict.get("keyword_id", "")),
+                    description=str(node_dict.get("description", "")),
+                    importance=int(node_dict.get("keyword_importance", 5)),
+                    is_keyword_necessary=bool(node_dict.get("is_keyword_necessary", False)),
+                    is_resource_sufficient=bool(node_dict.get("is_resource_sufficient", False)),
                 )
             )
         except Exception:
@@ -627,9 +632,8 @@ async def get_graph(
         try:
             edges.append(
                 CurriculumEdge(
-                    from_keyword_id=str(edge_dict.get("from_keyword_id", "")),
-                    to_keyword_id=str(edge_dict.get("to_keyword_id", "")),
-                    relationship=str(edge_dict.get("relationship", "prerequisite")),
+                    end_keyword_id=str(edge_dict.get("end", "")),
+                    start_keyword_id=str(edge_dict.get("start", "")),
                 )
             )
         except Exception:
@@ -646,12 +650,14 @@ async def get_graph(
                 paper_id=paper_id,
                 paper_title=paper_title,
                 paper_authors=paper_authors,
+                summarize=summarize,
                 created_at=curriculum.get("created_at") or datetime.utcnow(),
                 total_study_time_hours=total_study_time_hours,
                 total_nodes=total_nodes,
             ),
             nodes=nodes,
             edges=edges,
+            first_node_order=first_node_order,
         )
     )
 
