@@ -603,7 +603,7 @@ async def get_graph(
                         type=ResourceType(res_dict.get("type", "article")),
                         difficulty=int(res_dict.get("difficulty", 5)),
                         importance=int(res_dict.get("importance", 5)),
-                        study_load_minutes=int(res_dict.get("study_load_minutes", 0)),
+                        study_load_minutes=int(res_dict.get("study_load", 0)),
                         resource_id=str(res_dict.get("resource_id", "")),
                         is_core=bool(res_dict.get("is_necessary", False)),
                         name=str(res_dict.get("resource_name", "")),
