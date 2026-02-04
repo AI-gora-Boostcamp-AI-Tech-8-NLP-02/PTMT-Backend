@@ -46,6 +46,7 @@ class ResourceType(str, Enum):
     ARTICLE = "article"
     VIDEO = "video"
     CODE = "code"
+    WEB_DOC = "web_doc"
 
 
 # ===========================================
@@ -129,7 +130,7 @@ class GenerationStatusResponse(BaseModel):
     """커리큘럼 생성 상태 응답"""
     curriculum_id: str
     status: CurriculumStatus
-    progress_percent: float
+    progress_percent: float | None = None  # 진행률 미지원 시 None
     current_step: str
 
 
@@ -150,9 +151,9 @@ class Resource(BaseModel):
     url: Optional[str] = None
     type: ResourceType
     description: str
-    difficulty: int  # 1-10
-    importance: int  # 1-10
-    study_load_minutes: int
+    difficulty: float  # 1-10
+    importance: float  # 1-10
+    study_load_minutes: float
     is_core: bool
 
 
@@ -162,15 +163,15 @@ class CurriculumNode(BaseModel):
     keyword: str
     description: str
     importance: int
-    layer: Optional[int] = None
+    is_keyword_necessary: bool
+    is_resource_sufficient: bool
     resources: List[Resource]
 
 
 class CurriculumEdge(BaseModel):
     """커리큘럼 그래프 엣지"""
-    from_keyword_id: str
-    to_keyword_id: str
-    relationship: str = "prerequisite"
+    end_keyword_id: str
+    start_keyword_id: str
 
 
 class CurriculumGraphMeta(BaseModel):
@@ -179,13 +180,14 @@ class CurriculumGraphMeta(BaseModel):
     paper_id: str
     paper_title: str
     paper_authors: Optional[List[str]] = None
+    summarize: str
     created_at: datetime
     total_study_time_hours: float
     total_nodes: int
-
 
 class CurriculumGraphResponse(BaseModel):
     """커리큘럼 그래프 응답"""
     meta: CurriculumGraphMeta
     nodes: List[CurriculumNode]
     edges: List[CurriculumEdge]
+    first_node_order: List[str]

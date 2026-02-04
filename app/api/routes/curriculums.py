@@ -87,7 +87,8 @@ DUMMY_GRAPH_NODES = [
         keyword="선형대수",
         description="행렬 연산과 벡터 공간의 기초",
         importance=8,
-        layer=1,
+        is_keyword_necessary=True,
+        is_resource_sufficient=True,
         resources=[
             Resource(
                 resource_id="res-1",
@@ -107,7 +108,8 @@ DUMMY_GRAPH_NODES = [
         keyword="신경망 기초",
         description="인공 신경망의 기본 구조와 학습 방법",
         importance=9,
-        layer=2,
+        is_keyword_necessary=True,
+        is_resource_sufficient=True,
         resources=[
             Resource(
                 resource_id="res-2",
@@ -127,7 +129,8 @@ DUMMY_GRAPH_NODES = [
         keyword="Attention Mechanism",
         description="시퀀스 모델링에서의 어텐션 메커니즘",
         importance=10,
-        layer=3,
+        is_keyword_necessary=True,
+        is_resource_sufficient=True,
         resources=[
             Resource(
                 resource_id="res-3",
@@ -147,7 +150,8 @@ DUMMY_GRAPH_NODES = [
         keyword="Transformer",
         description="Self-Attention 기반 시퀀스 모델",
         importance=10,
-        layer=4,
+        is_keyword_necessary=True,
+        is_resource_sufficient=True,
         resources=[
             Resource(
                 resource_id="res-4",
@@ -165,9 +169,9 @@ DUMMY_GRAPH_NODES = [
 ]
 
 DUMMY_GRAPH_EDGES = [
-    CurriculumEdge(from_keyword_id="node-linear-algebra", to_keyword_id="node-neural-network", relationship="prerequisite"),
-    CurriculumEdge(from_keyword_id="node-neural-network", to_keyword_id="node-attention", relationship="prerequisite"),
-    CurriculumEdge(from_keyword_id="node-attention", to_keyword_id="node-transformer", relationship="prerequisite"),
+    CurriculumEdge(start_keyword_id="node-linear-algebra", end_keyword_id="node-neural-network"),
+    CurriculumEdge(start_keyword_id="node-neural-network", end_keyword_id="node-attention"),
+    CurriculumEdge(start_keyword_id="node-attention", end_keyword_id="node-transformer"),
 ]
 
 
@@ -462,15 +466,9 @@ async def start_generation(
         
         # 결과 확인: curriculum_id가 일치하고 success가 true이고 status가 generating이면
         if result:
-            result_curr_id = result.get("curriculum_id") or result.get("curr_id")
             result_success = result.get("success")
-            result_status = result.get("status")
             
-            if (
-                result_curr_id == curriculum_id
-                and result_success is True
-                and result_status == "generating"
-            ):
+            if (result_success is True):
                 return ApiResponse.ok(
                     GenerationStartResponse(
                         curriculum_id=curriculum_id,
@@ -562,26 +560,30 @@ async def get_graph(
             "커리큘럼 그래프가 아직 생성되지 않았습니다.",
         )
     
-    # Paper 정보 조회
     paper_id = "unknown"
     paper_title = "Unknown Paper"
     paper_authors = []
+    summarize = "Unknown Summary"
     
     try:
         linked_papers, _ = await crud.papers.get_paper_by_curr(
             curriculum_id=curriculum_id, page=1, limit=1
         )
+        print(linked_papers[0].keys())
         if linked_papers:
             p = linked_papers[0]
             paper_id = str(p.get("id", "unknown"))
             paper_title = str(p.get("title") or "Unknown Paper")
             paper_authors = p.get("authors") or []
+            summarize = p.get("summary") or "Unknown Summary"
     except Exception:
         pass
-    
+
+
     # 그래프 데이터 파싱
     nodes_data = graph_data.get("nodes", [])
     edges_data = graph_data.get("edges", [])
+    first_node_order = graph_data.get("first_node_order", [])
     
     # 노드 파싱
     nodes = []
@@ -595,31 +597,39 @@ async def get_graph(
             if not isinstance(res_dict, dict):
                 continue
             try:
+                raw_study = res_dict.get("study_load", 0)
+                study_minutes = float(raw_study)
+                raw_difficulty = res_dict.get("difficulty", 5)
+                raw_importance = res_dict.get("importance", 5)
+                difficulty = float(raw_difficulty) 
+                importance = float(raw_importance) 
                 resources.append(
                     Resource(
-                        resource_id=str(res_dict.get("resource_id", "")),
-                        name=str(res_dict.get("name", "")),
                         url=res_dict.get("url"),
                         type=ResourceType(res_dict.get("type", "article")),
-                        description=str(res_dict.get("description", "")),
-                        difficulty=int(res_dict.get("difficulty", 5)),
-                        importance=int(res_dict.get("importance", 5)),
-                        study_load_minutes=int(res_dict.get("study_load_minutes", 0)),
-                        is_core=bool(res_dict.get("is_core", False)),
+                        difficulty=difficulty,
+                        importance=importance,
+                        study_load_minutes=study_minutes,
+                        resource_id=str(res_dict.get("resource_id", "")),
+                        is_core=bool(res_dict.get("is_necessary", False)),
+                        name=str(res_dict.get("resource_name", res_dict.get("name", "")) or ""),
+                        description=str(res_dict.get("resource_description", res_dict.get("description", "")) or ""),
                     )
                 )
-            except Exception:
+            except (ValueError, TypeError):
+                print(f"Error parsing resource: {res_dict}")
                 continue
         
         try:
             nodes.append(
                 CurriculumNode(
-                    keyword_id=str(node_dict.get("keyword_id", "")),
                     keyword=str(node_dict.get("keyword", "")),
-                    description=str(node_dict.get("description", "")),
-                    importance=int(node_dict.get("importance", 5)),
-                    layer=node_dict.get("layer"),
                     resources=resources,
+                    keyword_id=str(node_dict.get("keyword_id", "")),
+                    description=str(node_dict.get("description", "")),
+                    importance=int(node_dict.get("keyword_importance", 5)),
+                    is_keyword_necessary=bool(node_dict.get("is_keyword_necessary", False)),
+                    is_resource_sufficient=bool(node_dict.get("is_resource_sufficient", False)),
                 )
             )
         except Exception:
@@ -633,16 +643,17 @@ async def get_graph(
         try:
             edges.append(
                 CurriculumEdge(
-                    from_keyword_id=str(edge_dict.get("from_keyword_id", "")),
-                    to_keyword_id=str(edge_dict.get("to_keyword_id", "")),
-                    relationship=str(edge_dict.get("relationship", "prerequisite")),
+                    end_keyword_id=str(edge_dict.get("end", "")),
+                    start_keyword_id=str(edge_dict.get("start", "")),
                 )
             )
         except Exception:
             continue
     
-    # 메타 정보 계산
-    total_study_time_hours = float(curriculum.get("estimated_hours", 0.0))
+    total_minutes = sum(
+        r.study_load_minutes for n in nodes for r in n.resources
+    )
+    total_study_time_hours = total_minutes
     total_nodes = len(nodes)
     
     return ApiResponse.ok(
@@ -652,12 +663,14 @@ async def get_graph(
                 paper_id=paper_id,
                 paper_title=paper_title,
                 paper_authors=paper_authors,
+                summarize=summarize,
                 created_at=curriculum.get("created_at") or datetime.utcnow(),
                 total_study_time_hours=total_study_time_hours,
                 total_nodes=total_nodes,
             ),
             nodes=nodes,
             edges=edges,
+            first_node_order=first_node_order,
         )
     )
 

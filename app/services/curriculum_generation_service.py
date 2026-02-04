@@ -81,6 +81,7 @@ async def start_generation(curriculum_id: str) -> dict[str, Any] | None:
             paper_abstract = paper.get("abstract") or ""
             keywords = paper.get("keywords") or []
             extracted_text = paper.get("extracted_text") or ""
+            summary = paper.get("summary") or ""
     except Exception:
         raise ValueError("Failed to get paper")
 
@@ -138,12 +139,16 @@ async def start_generation(curriculum_id: str) -> dict[str, Any] | None:
         "body": paper_body,
     }
 
+    keywords_list: list[str] = list(keywords) if isinstance(keywords, list) else []
     body: dict[str, Any] = {
         "curriculum_id": curriculum_id,
         "paper_id": paper_id or "",
-        "initial_keyword": keywords,
+        "initial_keyword": keywords_list,
+        "paper_summary": summary or "",
         "paper_content": paper_content,
         "user_info": user_info,
+        "paper_title": paper_title or "",
+        "keywords": keywords_list,
     }
 
     url = f"{api_url}{CURR_GENERATE_PATH}"
@@ -154,7 +159,6 @@ async def start_generation(curriculum_id: str) -> dict[str, Any] | None:
 
     print(headers)
     print(body)
-    
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(url, json=body, headers=headers)
         resp.raise_for_status()
