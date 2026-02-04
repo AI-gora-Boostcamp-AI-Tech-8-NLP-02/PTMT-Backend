@@ -60,6 +60,26 @@ async def get_paper(paper_id: str) -> dict[str, Any]:
     return resp.data
 
 
+async def get_paper_by_title(title: str) -> Optional[dict[str, Any]]:
+    """Return the most recently created paper with the given title, or None if not found."""
+    client = await get_supabase_client()
+    try:
+        req = (
+            client.table("papers")
+            .select("*")
+            .eq("title", title)
+            .order("created_at", desc=True)
+            .limit(1)
+        )
+        resp = await req.execute()
+    except APIError as e:
+        raise translate_postgrest_error(e, default_message="Failed to fetch paper by title") from e
+
+    if not resp.data or len(resp.data) == 0:
+        return None
+    return resp.data[0]
+
+
 async def get_papers_by_user(
     *,
     user_id: Optional[str] = None,

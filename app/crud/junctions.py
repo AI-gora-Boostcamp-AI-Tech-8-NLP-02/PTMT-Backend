@@ -33,6 +33,34 @@ async def add_user_paper(*, user_id: str, paper_id: str) -> dict[str, Any]:
     return resp.data[0]
 
 
+async def ensure_user_paper(*, user_id: str, paper_id: str) -> dict[str, Any]:
+    """Ensure user_papers link exists; create if not. Returns the link row (existing or new).
+    Uses limit(1) instead of maybe_single() so duplicate rows do not cause 406."""
+    client = await get_supabase_client()
+    try:
+        existing = (
+            client.table("user_papers")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("paper_id", paper_id)
+            .limit(1)
+        )
+        resp = await existing.execute()
+    except APIError as e:
+        raise translate_postgrest_error(e, default_message="Failed to check user_papers link") from e
+    if resp is not None and resp.data and len(resp.data) > 0:
+        return resp.data[0]
+    try:
+        insert_resp = await client.table("user_papers").insert(
+            {"user_id": user_id, "paper_id": paper_id}
+        ).execute()
+    except APIError as e:
+        raise translate_postgrest_error(e, default_message="Failed to link user_paper") from e
+    if insert_resp is None or not insert_resp.data:
+        raise RuntimeError("Supabase insert returned no data for user_papers")
+    return insert_resp.data[0]
+
+
 async def remove_user_paper(*, user_id: str, paper_id: str) -> None:
     client = await get_supabase_client()
     # Ensure NotFound semantics even if delete returns minimal body.
