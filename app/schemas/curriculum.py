@@ -76,6 +76,11 @@ class CurriculumImportRequest(BaseModel):
     created_at: str
 
 
+class CurriculumImportFailedRequest(BaseModel):
+    """커리큘럼 import 실패 처리 요청"""
+    curriculum_id: str
+
+
 # ===========================================
 # Response Schemas
 # ===========================================

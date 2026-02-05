@@ -22,6 +22,7 @@ from app.schemas.curriculum import (
     CurriculumGraphMeta,
     CurriculumGraphResponse,
     CurriculumImportRequest,
+    CurriculumImportFailedRequest,
     CurriculumImportResponse,
     CurriculumListItem,
     CurriculumListResponse,
@@ -763,3 +764,46 @@ async def import_curriculum(
         )
     )
 
+
+@router.post(
+    "/import_failed",
+    response_model=ApiResponse[CurriculumImportResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_failed_curriculum(
+    request: CurriculumImportFailedRequest,
+    current_user: UserResponse = Depends(get_current_user),
+) -> ApiResponse[CurriculumImportResponse]:
+    """커리큘럼 import 실패 처리
+    
+    외부에서 생성된 커리큘럼 import 실패 상태를 DB에 반영합니다.
+    
+    1. curriculum_id로 커리큘럼 상태를 failed로 변경
+    """
+    try:
+        await crud.curriculums.update_curriculum(
+            request.curriculum_id,
+            status="failed",
+        )
+    except CrudConfigError:
+        return ApiResponse.fail(
+            "DB_NOT_CONFIGURED",
+            "DB 설정이 필요합니다. (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+        )
+    except NotFoundError:
+        return ApiResponse.fail(
+            "CURRICULUM_NOT_FOUND",
+            f"커리큘럼을 찾을 수 없습니다: {request.curriculum_id}",
+        )
+    except Exception as e:
+        return ApiResponse.fail(
+            "INTERNAL_SERVER_ERROR",
+            f"서버 오류가 발생했습니다: {str(e)}",
+        )
+    
+    return ApiResponse.ok(
+        CurriculumImportResponse(
+            curriculum_id=request.curriculum_id,
+            status="failed",
+        )
+    )
