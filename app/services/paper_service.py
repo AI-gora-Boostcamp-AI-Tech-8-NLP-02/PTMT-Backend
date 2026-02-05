@@ -187,41 +187,28 @@ async def process_pdf_upload(
     Returns:
         (paper, curriculum, pdf_url) 튜플
     """
-    # 1. Supabase Storage에 업로드
-    storage_path, pdf_url = await upload_pdf_to_storage(
-        contents=contents,
-        user_id=user_id,
-        filename=filename,
-    )
-    
-    # 2. PDF 텍스트 및 메타데이터 추출 (GROBID 사용)
+    # 1. PDF 텍스트 및 메타데이터 추출 (GROBID) — 제목 확보 후 캐시 조회용
     print(f"[PDF Processing] PDF 처리 시작: {filename}")
     print(f"[PDF Processing] 파일 크기: {len(contents)} bytes")
-    
     try:
-        # 2-1. GROBID로 메타데이터 추출
         print(f"[PDF Processing] 메타데이터 추출 중...")
         metadata = await pdf_service.extract_metadata(contents)
         print(f"[PDF Processing] 제목: {metadata['title']}")
         print(f"[PDF Processing] 저자: {len(metadata['authors'])}명")
-        
-        # 2-2. GROBID로 본문 텍스트 추출
         print(f"[PDF Processing] 본문 텍스트 추출 중...")
         extracted_text = await pdf_service.extract_text(contents)
         print(f"[PDF Processing] 추출된 텍스트 길이: {len(extracted_text)} characters")
-        
     except Exception as e:
         print(f"[PDF Processing] GROBID 처리 실패: {e}")
-        # 폴백: 기본 메타데이터 사용
         extracted_text = ""
         metadata = {
             "title": filename.replace(".pdf", ""),
             "authors": ["Unknown Author"],
             "abstract": "",
-            "keywords": []
+            "keywords": [],
         }
-    
-    # 4. users 테이블에 사용자가 있는지 확인하
+
+    # 2. 사용자 확인
     await ensure_user_exists(
         user_id=user_id,
         email=user_email,
@@ -230,16 +217,37 @@ async def process_pdf_upload(
         role=user_role,
     )
 
-    # 3. AI로 키워드 추출
-    print(f"[AI Keyword Extraction] AI 키워드 추출 시작")
-    keywords: list[str] = []
-    summary: str | None = None
-    
-    # Paper를 먼저 생성하여 paper_id를 얻음
     paper_title = metadata.get("title") or filename.replace(".pdf", "")
     paper_authors = metadata.get("authors") or ["Unknown Author"]
     paper_abstract = metadata.get("abstract") or "초록을 추출할 수 없습니다."
-    
+
+    # 3. 제목으로 기존 paper 조회 (캐시)
+    existing = await crud.papers.get_paper_by_title(paper_title)
+    if existing is not None:
+        print(f"[PDF Processing] 캐시 히트: 업로드 생략, 기존 paper 재사용, 키워드 추출 생략")
+        # 캐시 히트: 업로드 생략, 기존 paper 재사용, 키워드 추출 생략
+        await crud.junctions.ensure_user_paper(user_id=user_id, paper_id=str(existing["id"]))
+        curriculum = await create_curriculum_for_paper(
+            user_id=user_id,
+            paper_id=str(existing["id"]),
+            paper_title=paper_title,
+        )
+        storage_path = existing.get("pdf_storage_path")
+        if storage_path:
+            client = await get_supabase_client()
+            pdf_url = await client.storage.from_("papers").get_public_url(storage_path)
+        else:
+            pdf_url = ""
+        print(f"[PDF Processing] 기존 paper 조회 완료: {existing['id']}")
+        return existing, curriculum, pdf_url
+
+    # 4. 캐시 미스: Storage 업로드 후 새 paper 생성
+    print(f"[PDF Processing] 캐시 미스: Storage 업로드 후 새 paper 생성")
+    storage_path, pdf_url = await upload_pdf_to_storage(
+        contents=contents,
+        user_id=user_id,
+        filename=filename,
+    )
     paper, curriculum = await create_paper_with_curriculum(
         user_id=user_id,
         title=paper_title,
@@ -250,65 +258,37 @@ async def process_pdf_upload(
         pdf_storage_path=storage_path,
         extracted_text=extracted_text,
     )
-
     paper_id = str(paper["id"])
-    
-    # 키워드 추출 API 호출
+
+    # 5. 키워드 추출 API 호출 및 paper 업데이트
+    print(f"[AI Keyword Extraction] AI 키워드 추출 시작")
     try:
         api_url = (settings.KEYWORD_EXTRACTION_API_URL or "").rstrip("/")
         token = (settings.KEYWORD_EXTRACTION_API_TOKEN or "").strip()
-        
         if api_url and token and extracted_text:
             keyword_api_url = f"{api_url}/api/curr/keywords/extract"
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             }
-            
-            # extracted_text가 JSON 형식일 경우 body 필드 추출
             paper_body = []
-            if extracted_text:
-                try:
-                    # extracted_text가 JSON 문자열인 경우 파싱
-                    if isinstance(extracted_text, str):
-                        parsed_text = json.loads(extracted_text)
-                        paper_body = parsed_text.get("body", [])
-                    # 이미 딕셔너리인 경우
-                    elif isinstance(extracted_text, dict):
-                        paper_body = extracted_text.get("body", [])
-                    # 그 외의 경우 원본 텍스트를 그대로 사용
-                    else:
-                        paper_body = [
-                            {
-                                "subtitle": "Full Text",
-                                "text": str(extracted_text),
-                            }
-                        ]
-                except (json.JSONDecodeError, AttributeError):
-                    # JSON 파싱 실패 시 원본 텍스트를 그대로 사용
-                    paper_body = [
-                        {
-                            "subtitle": "Full Text",
-                            "text": extracted_text,
-                        }
-                    ]
-            
-            # paper_content 구조 생성
+            try:
+                if isinstance(extracted_text, str):
+                    parsed_text = json.loads(extracted_text)
+                    paper_body = parsed_text.get("body", [])
+                elif isinstance(extracted_text, dict):
+                    paper_body = extracted_text.get("body", [])
+                else:
+                    paper_body = [{"subtitle": "Full Text", "text": str(extracted_text)}]
+            except (json.JSONDecodeError, AttributeError):
+                paper_body = [{"subtitle": "Full Text", "text": extracted_text}]
             paper_content = {
                 "title": paper_title,
                 "author": ", ".join(paper_authors) if paper_authors else "",
                 "abstract": paper_abstract,
                 "body": paper_body,
             }
-            
-            body = {
-                "paper_id": paper_id,
-                "paper_content": paper_content,
-            }
-
-            print(headers)
-            print(body)
-            
+            body = {"paper_id": paper_id, "paper_content": paper_content}
             print(f"[AI Keyword Extraction] API 호출: {keyword_api_url}")
             async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(keyword_api_url, json=body, headers=headers)
@@ -317,23 +297,13 @@ async def process_pdf_upload(
                 keywords = result.get("keywords", [])
                 summary = result.get("summary")
                 print(f"[AI Keyword Extraction] 추출된 키워드: {keywords}")
-                print(f"[AI Keyword Extraction] 요약: {summary[:100] if summary else 'None'}...")
-                
-                # Paper 테이블에 keywords와 summary 업데이트
-                await crud.papers.update_paper(
-                    paper_id=paper_id,
-                    keywords=keywords,
-                    summary=summary,
-                )
-                print(f"[AI Keyword Extraction] Paper 업데이트 완료")
+                await crud.papers.update_paper(paper_id=paper_id, keywords=keywords, summary=summary)
                 paper["keywords"] = keywords
         else:
             print(f"[AI Keyword Extraction] API 설정이 없거나 추출된 텍스트가 없어 건너뜁니다.")
     except Exception as e:
         print(f"[AI Keyword Extraction] 키워드 추출 실패: {e}")
-        # 실패해도 계속 진행
-    
-    # Paper와 Curriculum은 이미 생성되었으므로 반환만 함
+
     return paper, curriculum, pdf_url
 
 
@@ -385,7 +355,6 @@ async def submit_search_stub(
     Returns:
         (paper, curriculum) 튜플
     """
-    # users 테이블에 사용자가 있는지 확인
     try:
         await crud.users.get_user(user_id)
     except NotFoundError:
@@ -401,7 +370,6 @@ async def submit_search_stub(
         source_url=source_url,
         pdf_storage_path=None,
     )
-    
     return paper, curriculum
 
 
