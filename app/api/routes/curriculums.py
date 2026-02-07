@@ -183,6 +183,48 @@ DUMMY_GRAPH_EDGES = [
 # API 엔드포인트
 # ===========================================
 
+
+async def _dispatch_generation_with_queue(curriculum_id: str) -> None:
+    """Run queued generation flow in background to avoid request timeout."""
+
+    lease_active = False
+    try:
+        assigned_key_slot = await key_queue_service.acquire_slot(
+            task_type="curriculum_generation",
+            task_id=curriculum_id,
+            curriculum_id=curriculum_id,
+        )
+        lease_active = True
+
+        result = await curriculum_generation_service.start_generation(
+            curriculum_id=curriculum_id,
+            assigned_key_slot=assigned_key_slot,
+        )
+
+        if result and result.get("success") is True:
+            return
+
+        await crud.curriculums.update_curriculum(curriculum_id, status="failed")
+        if lease_active:
+            await key_queue_service.release_curriculum_slot(curriculum_id)
+
+    except asyncio.CancelledError:
+        try:
+            await crud.curriculums.update_curriculum(curriculum_id, status="failed")
+        except Exception:
+            pass
+        if lease_active:
+            await key_queue_service.release_curriculum_slot(curriculum_id)
+        raise
+    except Exception:
+        try:
+            await crud.curriculums.update_curriculum(curriculum_id, status="failed")
+        except Exception:
+            pass
+        if lease_active:
+            await key_queue_service.release_curriculum_slot(curriculum_id)
+
+
 def _map_status_to_api(value: Optional[str]) -> CurriculumStatus:
     if value in {s.value for s in CurriculumStatus}:
         return CurriculumStatus(value)  # type: ignore[arg-type]
@@ -468,9 +510,6 @@ async def start_generation(
     3. 상태를 generating으로 변경
     4. 백그라운드 작업 시작 (AI 커리큘럼 생성)
     """
-    assigned_key_slot: int | None = None
-    lease_active = False
-
     try:
         # Minimal DB update + delegate heavy lifting to service stub.
         await crud.curriculums.update_curriculum(curriculum_id, status="generating")
@@ -481,59 +520,15 @@ async def start_generation(
         )
     except NotFoundError:
         return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
-    
-    # 외부 API 호출 (키 슬롯 대기열 적용)
-    try:
-        assigned_key_slot = await key_queue_service.acquire_slot(
-            task_type="curriculum_generation",
-            task_id=curriculum_id,
+
+    # 큐 대기/외부 API 호출은 백그라운드에서 수행하여 HTTP 타임아웃을 피함
+    asyncio.create_task(_dispatch_generation_with_queue(curriculum_id))
+    return ApiResponse.ok(
+        GenerationStartResponse(
             curriculum_id=curriculum_id,
+            status="generating",
         )
-        lease_active = True
-
-        result = await curriculum_generation_service.start_generation(
-            curriculum_id=curriculum_id,
-            assigned_key_slot=assigned_key_slot,
-        )
-
-        # 결과 확인: curriculum_id가 일치하고 success가 true이고 status가 generating이면
-        if result:
-            result_success = result.get("success")
-
-            if result_success is True:
-                return ApiResponse.ok(
-                    GenerationStartResponse(
-                        curriculum_id=curriculum_id,
-                        status="generating",
-                    )
-                )
-
-        # 조건에 맞지 않으면 실패 처리
-        await crud.curriculums.update_curriculum(curriculum_id, status="failed")
-        if lease_active:
-            await key_queue_service.release_curriculum_slot(curriculum_id)
-        return ApiResponse.fail(
-            "GENERATION_FAILED",
-            "커리큘럼 생성 시작에 실패했습니다. 외부 API 응답이 올바르지 않습니다.",
-        )
-
-    except Exception as e:
-        # 외부 API 호출 실패 시
-        await crud.curriculums.update_curriculum(curriculum_id, status="failed")
-        if lease_active:
-            await key_queue_service.release_curriculum_slot(curriculum_id)
-        return ApiResponse.fail(
-            "GENERATION_FAILED",
-            f"커리큘럼 생성 시작에 실패했습니다: {str(e)}",
-        )
-    except asyncio.CancelledError:
-        try:
-            await crud.curriculums.update_curriculum(curriculum_id, status="failed")
-        except Exception:
-            pass
-        if lease_active:
-            await key_queue_service.release_curriculum_slot(curriculum_id)
-        raise
+    )
 
 
 @router.get("/{curriculum_id}/status", response_model=ApiResponse[GenerationStatusResponse])
