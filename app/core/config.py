@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # Refresh Cookie 설정
+    AUTH_REFRESH_COOKIE_NAME: str = "ptmt_refresh_token"
+    AUTH_REFRESH_COOKIE_PATH: str = "/api/auth"
+    AUTH_REFRESH_COOKIE_SAMESITE: str = "lax"
+    AUTH_REFRESH_COOKIE_SECURE: bool = False
+    AUTH_REFRESH_COOKIE_DOMAIN: str | None = None
+
     # CORS 설정
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
 

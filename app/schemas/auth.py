@@ -37,29 +37,10 @@ class SignupRequest(BaseModel):
     )
 
 
-class RefreshTokenRequest(BaseModel):
-    """토큰 갱신 요청"""
-    refresh_token: str
-    
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "refresh_token": "refresh_token_string"
-            }
-        }
-    )
-
-
-class LogoutRequest(BaseModel):
-    """로그아웃 요청 (선택적)"""
-    refresh_token: str | None = None
-
-
 class AuthResponse(BaseModel):
     """인증 응답 (로그인/회원가입 성공 시)"""
     user: UserResponse
     access_token: str
-    refresh_token: str
     expires_in: int = 3600  # 초 단위
 
 
