@@ -139,6 +139,30 @@ class GenerationStatusResponse(BaseModel):
     current_step: str
 
 
+class QueueSlotStatus(BaseModel):
+    """키 슬롯 상태"""
+
+    slot_number: int
+    status: str
+    cooldown_remaining_seconds: int
+    current_task_type: Optional[str] = None
+    current_task_id: Optional[str] = None
+
+
+class QueueStatusResponse(BaseModel):
+    """공용 대기열 상태"""
+
+    total_keys: int
+    cooldown_seconds: int
+    available_keys: int
+    busy_keys: int
+    cooldown_keys: int
+    waiting_jobs: int
+    estimated_wait_seconds: int
+    next_available_in_seconds: int
+    slots: List[QueueSlotStatus]
+
+
 class CurriculumImportResponse(BaseModel):
     """커리큘럼 import 응답"""
     curriculum_id: str

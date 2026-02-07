@@ -20,6 +20,7 @@ from app.crud.errors import NotFoundError
 from app.crud.supabase_client import get_supabase_client
 from app.models.user import User
 from app.services import pdf_service
+from app.services.key_queue_service import key_queue_service
 from app.crud.users import ensure_user_exists
 
 
@@ -271,6 +272,7 @@ async def process_pdf_upload(
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             }
+            assigned_key_slot: int | None = None
             paper_body = []
             try:
                 if isinstance(extracted_text, str):
@@ -288,17 +290,39 @@ async def process_pdf_upload(
                 "abstract": paper_abstract,
                 "body": paper_body,
             }
-            body = {"paper_id": paper_id, "paper_content": paper_content}
-            print(f"[AI Keyword Extraction] API 호출: {keyword_api_url}")
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(keyword_api_url, json=body, headers=headers)
-                resp.raise_for_status()
-                result = resp.json()
-                keywords = result.get("keywords", [])
-                summary = result.get("summary")
-                print(f"[AI Keyword Extraction] 추출된 키워드: {keywords}")
-                await crud.papers.update_paper(paper_id=paper_id, keywords=keywords, summary=summary)
-                paper["keywords"] = keywords
+            try:
+                assigned_key_slot = await key_queue_service.acquire_slot(
+                    task_type="keyword_extraction",
+                    task_id=paper_id,
+                )
+                body = {
+                    "paper_id": paper_id,
+                    "paper_content": paper_content,
+                    "assigned_key_slot": assigned_key_slot,
+                }
+                print(
+                    f"[AI Keyword Extraction] API 호출: {keyword_api_url} (slot={assigned_key_slot})"
+                )
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    resp = await client.post(
+                        keyword_api_url,
+                        json=body,
+                        headers=headers,
+                    )
+                    resp.raise_for_status()
+                    result = resp.json()
+                    keywords = result.get("keywords", [])
+                    summary = result.get("summary")
+                    print(f"[AI Keyword Extraction] 추출된 키워드: {keywords}")
+                    await crud.papers.update_paper(
+                        paper_id=paper_id,
+                        keywords=keywords,
+                        summary=summary,
+                    )
+                    paper["keywords"] = keywords
+            finally:
+                if assigned_key_slot is not None:
+                    await key_queue_service.release_slot(assigned_key_slot)
         else:
             print(f"[AI Keyword Extraction] API 설정이 없거나 추출된 텍스트가 없어 건너뜁니다.")
     except Exception as e:
@@ -376,4 +400,3 @@ async def submit_search_stub(
 async def search_by_title_stub(*args: Any, **kwargs: Any) -> None:
     """검색 stub - 향후 실제 외부 API 검색 구현 예정"""
     return None
-

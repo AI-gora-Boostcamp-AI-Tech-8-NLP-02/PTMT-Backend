@@ -58,7 +58,14 @@ class Settings(BaseSettings):
     
     # 키워드 추출 API (외부 서비스)
     KEYWORD_EXTRACTION_API_URL: str = "http://curr.ptmt.site"
-    KEYWORD_EXTRACTION_API_TOKEN: str =  Field(default="", env="KEYWORD_EXTRACTION_API_TOKEN:")
+    KEYWORD_EXTRACTION_API_TOKEN: str = Field(
+        default="",
+        env="KEYWORD_EXTRACTION_API_TOKEN",
+    )
+
+    # 키 슬롯 대기열 설정
+    KEY_QUEUE_TOTAL_KEYS: int = 5
+    KEY_QUEUE_COOLDOWN_SECONDS: int = 30
 
     @property
     def max_upload_size_bytes(self) -> int:
