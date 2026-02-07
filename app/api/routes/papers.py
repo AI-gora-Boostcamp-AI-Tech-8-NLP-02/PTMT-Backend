@@ -10,7 +10,7 @@ TODO: 실제 구현 시
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, Query, status
 
 from app.api.deps import get_current_user
 from app import crud
@@ -113,6 +113,7 @@ async def delete_paper(
 @router.post("/pdf", response_model=ApiResponse[PaperUploadResponse])
 async def upload_pdf(
     file: UploadFile = File(...),
+    client_task_id: str | None = Form(None),
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[PaperUploadResponse]:
     """PDF 업로드
@@ -149,6 +150,7 @@ async def upload_pdf(
             user_name=current_user.name,
             user_avatar_url=current_user.avatar_url,
             user_role=current_user.role,
+            queue_task_id=client_task_id,
         )
         
         paper_title = file.filename.replace(".pdf", "") if file.filename else "Unknown Paper"
@@ -273,4 +275,3 @@ async def search_by_title(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"논문 검색 중 오류가 발생했습니다: {str(e)}",
         )
-

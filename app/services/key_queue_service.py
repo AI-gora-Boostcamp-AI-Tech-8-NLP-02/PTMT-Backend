@@ -119,6 +119,22 @@ class KeyQueueService:
         if curriculum_id:
             self._curriculum_leases[curriculum_id] = slot.slot_number
 
+    @staticmethod
+    def _matches_task(
+        *,
+        target_task_id: Optional[str],
+        target_task_type: Optional[str],
+        task_id: Optional[str],
+        task_type: Optional[str],
+    ) -> bool:
+        if not target_task_id:
+            return False
+        if target_task_id != task_id:
+            return False
+        if target_task_type and target_task_type != task_type:
+            return False
+        return True
+
     def _release_slot_locked(self, slot: KeySlot, now: float) -> bool:
         if slot.status != SLOT_BUSY:
             return False
@@ -233,7 +249,12 @@ class KeyQueueService:
             self._condition.notify_all()
             return changed
 
-    async def get_snapshot(self) -> dict:
+    async def get_snapshot(
+        self,
+        *,
+        task_id: Optional[str] = None,
+        task_type: Optional[str] = None,
+    ) -> dict:
         """Return queue status snapshot for UI polling."""
 
         async with self._condition:
@@ -269,6 +290,32 @@ class KeyQueueService:
                 )
 
             waiting_jobs = len(self._wait_queue)
+            my_position: Optional[int] = None
+            my_status = "unknown"
+
+            for index, ticket in enumerate(self._wait_queue):
+                if self._matches_task(
+                    target_task_id=task_id,
+                    target_task_type=task_type,
+                    task_id=ticket.task_id,
+                    task_type=ticket.task_type,
+                ):
+                    my_position = index + 1
+                    my_status = "waiting"
+                    break
+
+            if my_position is None and task_id:
+                for slot in self._slots:
+                    if slot.status != SLOT_BUSY:
+                        continue
+                    if self._matches_task(
+                        target_task_id=task_id,
+                        target_task_type=task_type,
+                        task_id=slot.current_task_id,
+                        task_type=slot.current_task_type,
+                    ):
+                        my_status = "processing"
+                        break
 
             if available > 0:
                 next_available_in_seconds = 0
@@ -297,6 +344,8 @@ class KeyQueueService:
                 "waiting_jobs": waiting_jobs,
                 "estimated_wait_seconds": estimated_wait_seconds,
                 "next_available_in_seconds": next_available_in_seconds,
+                "my_position": my_position,
+                "my_status": my_status,
                 "slots": slots_payload,
             }
 

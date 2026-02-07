@@ -160,6 +160,8 @@ class QueueStatusResponse(BaseModel):
     waiting_jobs: int
     estimated_wait_seconds: int
     next_available_in_seconds: int
+    my_position: Optional[int] = None
+    my_status: str = "unknown"
     slots: List[QueueSlotStatus]
 
 

@@ -87,3 +87,21 @@ async def test_cancelled_waiting_task_removed_from_queue() -> None:
     assert snapshot["waiting_jobs"] == 0
 
     await service.release_slot(slot)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_includes_my_position() -> None:
+    service = KeyQueueService(total_keys=1, cooldown_seconds=0)
+
+    slot = await service.acquire_slot(task_type="test", task_id="job-1")
+    waiting_task = asyncio.create_task(
+        service.acquire_slot(task_type="test", task_id="job-2")
+    )
+
+    await asyncio.sleep(0.05)
+    snapshot = await service.get_snapshot(task_id="job-2", task_type="test")
+    assert snapshot["my_status"] == "waiting"
+    assert snapshot["my_position"] == 1
+
+    await service.release_slot(slot)
+    await waiting_task

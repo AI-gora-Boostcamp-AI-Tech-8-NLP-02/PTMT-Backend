@@ -308,11 +308,16 @@ async def get_curriculums(
 
 @router.get("/queue-status", response_model=ApiResponse[QueueStatusResponse])
 async def get_queue_status(
+    task_id: Optional[str] = Query(None, description="내 요청 추적용 task_id"),
+    task_type: Optional[str] = Query(None, description="내 요청 task_type"),
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[QueueStatusResponse]:
     """키 슬롯 대기열 상태 조회 (UI 폴링용)."""
 
-    snapshot = await key_queue_service.get_snapshot()
+    snapshot = await key_queue_service.get_snapshot(
+        task_id=task_id,
+        task_type=task_type,
+    )
     return ApiResponse.ok(QueueStatusResponse(**snapshot))
 
 

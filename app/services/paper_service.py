@@ -173,6 +173,7 @@ async def process_pdf_upload(
     user_name: str,
     user_avatar_url: str | None,
     user_role: str,
+    queue_task_id: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
     """PDF 업로드 전체 프로세스
     
@@ -184,6 +185,7 @@ async def process_pdf_upload(
         user_name: 사용자 이름
         user_avatar_url: 프로필 이미지 URL
         user_role: 사용자 역할
+        queue_task_id: 클라이언트가 전달한 대기열 추적 ID (선택)
         
     Returns:
         (paper, curriculum, pdf_url) 튜플
@@ -293,7 +295,7 @@ async def process_pdf_upload(
             try:
                 assigned_key_slot = await key_queue_service.acquire_slot(
                     task_type="keyword_extraction",
-                    task_id=paper_id,
+                    task_id=queue_task_id or paper_id,
                 )
                 body = {
                     "paper_id": paper_id,
