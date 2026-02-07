@@ -194,32 +194,41 @@ async def submit_link(
 ) -> ApiResponse[PaperUploadResponse]:
     """링크 제출
 
-    TODO: 실제 구현
-    1. URL 유효성 검사
-    2. URL에서 PDF 다운로드 또는 메타데이터 추출
-    3. arXiv, Semantic Scholar 등 API 활용
-    4. Paper 및 Curriculum(draft) 생성
+    PDF 직접 링크(예: https://arxiv.org/pdf/1706.03762)를 다운로드 후
+    process_pdf_upload와 동일하게 처리하여 Paper 및 Curriculum 생성.
     """
-    # TODO: URL 검증 및 논문 정보 추출
-    # paper_info = await paper_service.fetch_from_url(str(data.url))
     try:
-        paper_row, curriculum_row = await paper_service.submit_link_stub(
-        url=str(data.url),
-        user_id=current_user.id,
-    )
+        paper_row, curriculum_row, pdf_url = await paper_service.submit_link(
+            url=str(data.url),
+            user_id=current_user.id,
+            user_email=current_user.email,
+            user_name=current_user.name,
+            user_avatar_url=current_user.avatar_url,
+            user_role=current_user.role,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except CrudConfigError:
         return ApiResponse.fail("DB_NOT_CONFIGURED", "DB 설정이 필요합니다.")
+
+    keywords_data = paper_row.get("keywords") or []
+    keywords_response = (
+        [Keyword(name=k) for k in keywords_data]
+        if keywords_data and isinstance(keywords_data[0], str)
+        else (keywords_data if keywords_data else [])
+    )
 
     return ApiResponse.ok(
         PaperUploadResponse(
             paper_id=str(paper_row["id"]),
             curriculum_id=str(curriculum_row["id"]),
             title=str(paper_row.get("title") or "URL에서 분석한 논문"),
-            authors=paper_row.get("authors") or ["Author from URL"],
-            abstract=str(paper_row.get("abstract") or "AI가 링크의 논문을 분석 중입니다. (더미 데이터)"),
+            authors=paper_row.get("authors") or ["Unknown Author"],
+            abstract=str(paper_row.get("abstract") or "AI가 링크의 논문을 분석 중입니다."),
             language=str(paper_row.get("language") or "english"),
-            keywords=DUMMY_KEYWORDS,
+            keywords=keywords_response,
             source_url=str(data.url),
+            pdf_url=pdf_url,
         )
     )
 
@@ -229,49 +238,52 @@ async def search_by_title(
     data: TitleSearchRequest,
     current_user: UserResponse = Depends(get_current_user),
 ) -> ApiResponse[PaperUploadResponse]:
-    """논문 제목 검색
+    """논문 제목/자연어 검색
 
-    1. 외부 API로 논문 검색 (arXiv, Semantic Scholar, Google Scholar) - TODO
-    2. 검색 결과에서 논문 정보 추출 - TODO
-    3. Paper 및 Curriculum(draft) 생성
+    Semantic Scholar로 검색한 뒤 첫 번째 논문의 PDF로만 Paper 및 Curriculum 생성.
+    PDF를 사용할 수 없으면(openAccessPdf 없음 또는 다운로드/처리 실패) 400 응답.
     """
     try:
-        # TODO: 실제 외부 API 검색 구현
-        # search_result = await paper_service.search_by_title(data.title)
-        # if not search_result:
-        #     raise HTTPException(status_code=404, detail="논문을 찾을 수 없습니다.")
-        
-        # 검색 결과를 통해 Paper와 Curriculum 생성
-        # TODO: 실제 검색 결과 사용 시 아래 값들을 검색 결과에서 가져오기
-        paper, curriculum = await paper_service.submit_search_stub(
-            title=data.title,
+        paper_row, curriculum_row, pdf_url = await paper_service.search_by_title(
+            query=data.title,
             user_id=current_user.id,
-            authors=["Vaswani et al."],  # TODO: 검색 결과에서 가져오기
-            abstract="AI가 논문을 분석하여 학습 경로를 생성합니다. (더미 데이터)",  # TODO: 검색 결과에서 가져오기
-            source_url=None,  # TODO: 검색 결과에서 가져오기
+            user_email=current_user.email,
+            user_name=current_user.name,
+            user_avatar_url=current_user.avatar_url,
+            user_role=current_user.role,
         )
-        
-        return ApiResponse.ok(
-            PaperUploadResponse(
-                paper_id=str(paper["id"]),
-                curriculum_id=str(curriculum["id"]),
-                title=data.title,
-                authors=paper.get("authors") or ["Vaswani et al."],
-                abstract=paper.get("abstract") or "AI가 논문을 분석하여 학습 경로를 생성합니다.",
-                language=paper.get("language") or "english",
-                keywords=DUMMY_KEYWORDS,
-                source_url=paper.get("source_url"),
-            )
-        )
-        
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+        msg = str(e)
+        if "검색 결과가 없습니다" in msg:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=msg)
+        # PDF 사용 불가(openAccessPdf 없음 또는 다운로드/처리 실패)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+    except CrudConfigError:
+        return ApiResponse.fail("DB_NOT_CONFIGURED", "DB 설정이 필요합니다.")
     except Exception as e:
         print(f"[Search Error] 검색 중 오류 발생: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"논문 검색 중 오류가 발생했습니다: {str(e)}",
         )
+
+    keywords_data = paper_row.get("keywords") or []
+    keywords_response = (
+        [Keyword(name=k) for k in keywords_data]
+        if keywords_data and isinstance(keywords_data[0], str)
+        else (keywords_data if keywords_data else [])
+    )
+
+    return ApiResponse.ok(
+        PaperUploadResponse(
+            paper_id=str(paper_row["id"]),
+            curriculum_id=str(curriculum_row["id"]),
+            title=str(paper_row.get("title") or data.title),
+            authors=paper_row.get("authors") or ["Unknown Author"],
+            abstract=str(paper_row.get("abstract") or "AI가 논문을 분석하여 핵심 개념을 추출했습니다."),
+            language=str(paper_row.get("language") or "english"),
+            keywords=keywords_response,
+            source_url=paper_row.get("source_url"),
+            pdf_url=pdf_url,
+        )
+    )

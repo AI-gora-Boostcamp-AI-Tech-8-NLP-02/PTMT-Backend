@@ -1,27 +1,22 @@
-"""Paper service (stub).
-
-Complex logic (upload to Supabase Storage, parsing PDFs, external search) will live here.
-For now, API routes call these async stubs without implementing details.
-"""
+"""Paper service: PDF 업로드/처리, 링크 제출, 논문 검색(arXiv)."""
 
 from __future__ import annotations
 
 import json
+import re
 import uuid
-from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from urllib.parse import urlparse
 
 import httpx
 
 from app import crud
 from app.core.config import settings
-from app.crud.errors import NotFoundError
 from app.crud.supabase_client import get_supabase_client
-from app.models.user import User
 from app.services import pdf_service
 from app.services.key_queue_service import key_queue_service
 from app.crud.users import ensure_user_exists
+from app.utils.arxiv_paper_search import search_arxiv_first_pdf
 
 
 async def upload_pdf_to_storage(
@@ -43,8 +38,7 @@ async def upload_pdf_to_storage(
     file_id = uuid.uuid4()
     storage_path = f"{user_id}/{file_id}.pdf"
     
-    # Supabase Storage에 업로드
-    storage_response = await client.storage.from_("papers").upload(
+    await client.storage.from_("papers").upload(
         path=storage_path,
         file=contents,
         file_options={"content-type": "application/pdf"}
@@ -224,10 +218,12 @@ async def process_pdf_upload(
     paper_authors = metadata.get("authors") or ["Unknown Author"]
     paper_abstract = metadata.get("abstract") or "초록을 추출할 수 없습니다."
 
-    # 3. 제목으로 기존 paper 조회 (캐시)
+    # 3. 제목으로 기존 paper 조회 (캐시) — 키워드 5개일 때만 캐시 히트
     existing = await crud.papers.get_paper_by_title(paper_title)
-    if existing is not None:
-        print(f"[PDF Processing] 캐시 히트: 업로드 생략, 기존 paper 재사용, 키워드 추출 생략")
+    keywords_list = existing.get("keywords") if existing else None
+    keyword_count = len(keywords_list) if isinstance(keywords_list, list) else 0
+    if existing is not None and keyword_count == 5:
+        print(f"[PDF Processing] 캐시 히트: 업로드 생략, 기존 paper 재사용, 키워드 추출 생략 (키워드 {keyword_count}개)")
         # 캐시 히트: 업로드 생략, 기존 paper 재사용, 키워드 추출 생략
         await crud.junctions.ensure_user_paper(user_id=user_id, paper_id=str(existing["id"]))
         curriculum = await create_curriculum_for_paper(
@@ -333,72 +329,158 @@ async def process_pdf_upload(
     return paper, curriculum, pdf_url
 
 
-async def submit_link_stub(*, url: str, user_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Create dummy Paper + Curriculum rows for a link submission.
+# arXiv PDF URL: https://arxiv.org/pdf/1706.03762 or https://arxiv.org/pdf/1706.03762.pdf
+_ARXIV_PDF_RE = re.compile(r"^https?://arxiv\.org/pdf/([a-zA-Z0-9.]+)(?:\.pdf)?$", re.IGNORECASE)
 
-    This keeps business logic minimal while still persisting records to DB so
-    Swagger Try-it-out can verify that data is actually inserted.
+
+async def _download_pdf_from_url(url: str) -> tuple[bytes, str]:
+    """Download PDF from URL and return (contents, filename).
+
+    Accepts:
+        - https://arxiv.org/pdf/<id>
+        - Any URL whose path ends with .pdf
+        - Any URL whose response Content-Type is application/pdf
+
+    Raises:
+        ValueError: If URL is not a PDF link or download fails/size exceeded.
     """
-    # users 테이블에 사용자가 있는지 확인
-    try:
-        await crud.users.get_user(user_id)
-    except NotFoundError:
-        # users 테이블에 사용자가 없으면 생성할 수 없음 (user_id만으로는 정보 부족)
-        # 이 경우는 회원가입이 제대로 되지 않은 경우이므로 에러 발생
-        raise ValueError(f"User {user_id} not found in users table. Please ensure the user is properly registered.")
+    parsed = urlparse(url)
+    path = (parsed.path or "").rstrip("/")
+    path_lower = path.lower()
 
-    # 범용 함수 사용
-    paper, curriculum = await create_paper_with_curriculum(
-        user_id=user_id,
-        title="URL에서 분석한 논문",
-        authors=["Author from URL"],
-        abstract="AI가 링크의 논문을 분석 중입니다. (더미 데이터)",
-        language="english",
-        source_url=url,
-        pdf_storage_path=None,
-    )
+    # Optional: allow only known PDF patterns before requesting (save a request for obvious non-PDF)
+    # We still validate Content-Type after GET.
 
-    return paper, curriculum
+    timeout = 30.0
+    max_bytes = settings.max_upload_size_bytes
+
+    async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise ValueError(f"PDF 다운로드 실패: HTTP {e.response.status_code}") from e
+        except httpx.RequestError as e:
+            raise ValueError(f"PDF 다운로드 실패: {e!s}") from e
+
+        content_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+        is_pdf_content = content_type == "application/pdf"
+        is_pdf_path = path_lower.endswith(".pdf")
+
+        # arXiv PDF link
+        arxiv_match = _ARXIV_PDF_RE.match(url)
+        if arxiv_match:
+            # arXiv often returns html for some endpoints; check content-type
+            if not is_pdf_content:
+                raise ValueError("해당 arXiv 링크에서 PDF를 받을 수 없습니다. URL이 PDF 직접 링크인지 확인해 주세요.")
+            filename = f"{arxiv_match.group(1)}.pdf"
+        elif is_pdf_content or is_pdf_path:
+            if not is_pdf_content and is_pdf_path:
+                # Path says .pdf but server might return something else
+                if content_type and "application/pdf" not in content_type:
+                    raise ValueError("PDF 링크가 아닙니다. (Content-Type이 application/pdf가 아님)")
+            filename = path.split("/")[-1] if path_lower.endswith(".pdf") else "downloaded.pdf"
+            if not filename or not filename.lower().endswith(".pdf"):
+                filename = "downloaded.pdf"
+        else:
+            raise ValueError("PDF 링크가 아닙니다. (Content-Type이 application/pdf가 아니고, 경로도 .pdf로 끝나지 않음)")
+
+        # Read body with size limit
+        body = b""
+        async for chunk in resp.aiter_bytes(chunk_size=65536):
+            body += chunk
+            if len(body) > max_bytes:
+                raise ValueError(f"파일 크기가 {settings.MAX_UPLOAD_SIZE_MB}MB를 초과합니다.")
+
+    return body, filename
 
 
-async def submit_search_stub(
+async def submit_link(
     *,
-    title: str,
+    url: str,
     user_id: str,
-    authors: list[str] | None = None,
-    abstract: str | None = None,
-    source_url: str | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """검색 결과를 통해 Paper + Curriculum 생성
-    
-    Args:
-        title: 논문 제목
-        user_id: 사용자 ID
-        authors: 저자 목록 (선택)
-        abstract: 초록 (선택)
-        source_url: 원본 URL (선택)
-        
+    user_email: str,
+    user_name: str,
+    user_avatar_url: str | None,
+    user_role: str,
+    queue_task_id: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    """Download PDF from URL and process via process_pdf_upload.
+
     Returns:
-        (paper, curriculum) 튜플
+        (paper, curriculum, pdf_url) same as process_pdf_upload.
     """
-    try:
-        await crud.users.get_user(user_id)
-    except NotFoundError:
-        raise ValueError(f"User {user_id} not found in users table. Please ensure the user is properly registered.")
-    
-    # 범용 함수 사용
-    paper, curriculum = await create_paper_with_curriculum(
+    contents, filename = await _download_pdf_from_url(url)
+    return await process_pdf_upload(
+        contents=contents,
+        filename=filename,
         user_id=user_id,
-        title=title,
-        authors=authors or ["Unknown Author"],
-        abstract=abstract or "AI가 논문을 분석하여 핵심 개념을 추출했습니다.",
-        language="english",
-        source_url=source_url,
-        pdf_storage_path=None,
+        user_email=user_email,
+        user_name=user_name,
+        user_avatar_url=user_avatar_url,
+        user_role=user_role,
+        queue_task_id=queue_task_id,
     )
-    return paper, curriculum
 
 
-async def search_by_title_stub(*args: Any, **kwargs: Any) -> None:
-    """검색 stub - 향후 실제 외부 API 검색 구현 예정"""
-    return None
+async def _process_pdf_and_attach_source(
+    *,
+    contents: bytes,
+    filename: str,
+    source_url: str | None,
+    user_id: str,
+    user_email: str,
+    user_name: str,
+    user_avatar_url: str | None,
+    user_role: str,
+    queue_task_id: str | None,
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    """PDF 처리 후 paper에 source_url 반영해 반환."""
+    paper, curriculum, pdf_url = await process_pdf_upload(
+        contents=contents,
+        filename=filename,
+        user_id=user_id,
+        user_email=user_email,
+        user_name=user_name,
+        user_avatar_url=user_avatar_url,
+        user_role=user_role,
+        queue_task_id=queue_task_id,
+    )
+    if source_url and paper.get("id"):
+        await crud.papers.update_paper(paper_id=str(paper["id"]), source_url=source_url)
+        paper["source_url"] = source_url
+    return paper, curriculum, pdf_url
+
+
+async def search_by_title(
+    *,
+    query: str,
+    user_id: str,
+    user_email: str,
+    user_name: str,
+    user_avatar_url: str | None,
+    user_role: str,
+    queue_task_id: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], str | None]:
+    """자연어 검색 후 arXiv에서 query와 유사도가 가장 높은 논문의 PDF로 Paper/Curriculum 생성."""
+    arxiv_result = await search_arxiv_first_pdf(query)
+    if arxiv_result and arxiv_result.get("pdf_url"):
+        try:
+            contents, filename = await _download_pdf_from_url(arxiv_result["pdf_url"])
+            return await _process_pdf_and_attach_source(
+                contents=contents,
+                filename=filename,
+                source_url=arxiv_result.get("source_url"),
+                user_id=user_id,
+                user_email=user_email,
+                user_name=user_name,
+                user_avatar_url=user_avatar_url,
+                user_role=user_role,
+                queue_task_id=queue_task_id,
+            )
+        except ValueError:
+            raise
+        except Exception as e:
+            print(f"[Search] arXiv PDF 다운로드/처리 실패: {e}")
+
+    raise ValueError("검색 결과가 없습니다.")
