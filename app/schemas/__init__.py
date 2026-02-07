@@ -4,7 +4,6 @@ from app.schemas.common import ApiResponse, ErrorDetail, PaginationInfo
 from app.schemas.auth import (
     LoginRequest,
     SignupRequest,
-    RefreshTokenRequest,
     AuthResponse,
     TokenRefreshResponse,
     MessageResponse,
@@ -41,7 +40,6 @@ __all__ = [
     # Auth
     "LoginRequest",
     "SignupRequest",
-    "RefreshTokenRequest",
     "AuthResponse",
     "TokenRefreshResponse",
     "MessageResponse",
