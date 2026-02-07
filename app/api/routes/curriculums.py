@@ -6,6 +6,7 @@ TODO: 실제 구현 시
 - 그래프 데이터 저장/조회
 """
 
+import asyncio
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -34,6 +35,7 @@ from app.schemas.curriculum import (
     GenerationStartResponse,
     GenerationStatusResponse,
     PaperInfo,
+    QueueStatusResponse,
     Resource,
     ResourceType,
     UserLevel,
@@ -41,6 +43,7 @@ from app.schemas.curriculum import (
 from app.schemas.auth import MessageResponse
 from app.schemas.user import UserResponse
 from app.services import curriculum_generation_service
+from app.services.key_queue_service import key_queue_service
 
 router = APIRouter(prefix="/curriculums", tags=["curriculums"])
 
@@ -180,6 +183,48 @@ DUMMY_GRAPH_EDGES = [
 # API 엔드포인트
 # ===========================================
 
+
+async def _dispatch_generation_with_queue(curriculum_id: str) -> None:
+    """Run queued generation flow in background to avoid request timeout."""
+
+    lease_active = False
+    try:
+        assigned_key_slot = await key_queue_service.acquire_slot(
+            task_type="curriculum_generation",
+            task_id=curriculum_id,
+            curriculum_id=curriculum_id,
+        )
+        lease_active = True
+
+        result = await curriculum_generation_service.start_generation(
+            curriculum_id=curriculum_id,
+            assigned_key_slot=assigned_key_slot,
+        )
+
+        if result and result.get("success") is True:
+            return
+
+        await crud.curriculums.update_curriculum(curriculum_id, status="failed")
+        if lease_active:
+            await key_queue_service.release_curriculum_slot(curriculum_id)
+
+    except asyncio.CancelledError:
+        try:
+            await crud.curriculums.update_curriculum(curriculum_id, status="failed")
+        except Exception:
+            pass
+        if lease_active:
+            await key_queue_service.release_curriculum_slot(curriculum_id)
+        raise
+    except Exception:
+        try:
+            await crud.curriculums.update_curriculum(curriculum_id, status="failed")
+        except Exception:
+            pass
+        if lease_active:
+            await key_queue_service.release_curriculum_slot(curriculum_id)
+
+
 def _map_status_to_api(value: Optional[str]) -> CurriculumStatus:
     if value in {s.value for s in CurriculumStatus}:
         return CurriculumStatus(value)  # type: ignore[arg-type]
@@ -301,6 +346,21 @@ async def get_curriculums(
             ),
         )
     )
+
+
+@router.get("/queue-status", response_model=ApiResponse[QueueStatusResponse])
+async def get_queue_status(
+    task_id: Optional[str] = Query(None, description="내 요청 추적용 task_id"),
+    task_type: Optional[str] = Query(None, description="내 요청 task_type"),
+    current_user: UserResponse = Depends(get_current_user),
+) -> ApiResponse[QueueStatusResponse]:
+    """키 슬롯 대기열 상태 조회 (UI 폴링용)."""
+
+    snapshot = await key_queue_service.get_snapshot(
+        task_id=task_id,
+        task_type=task_type,
+    )
+    return ApiResponse.ok(QueueStatusResponse(**snapshot))
 
 
 @router.get("/{curriculum_id}", response_model=ApiResponse[CurriculumResponse])
@@ -460,37 +520,15 @@ async def start_generation(
         )
     except NotFoundError:
         return ApiResponse.fail("CURRICULUM_NOT_FOUND", "커리큘럼을 찾을 수 없습니다.")
-    
-    # 외부 API 호출
-    try:
-        result = await curriculum_generation_service.start_generation(curriculum_id)
-        
-        # 결과 확인: curriculum_id가 일치하고 success가 true이고 status가 generating이면
-        if result:
-            result_success = result.get("success")
-            
-            if (result_success is True):
-                return ApiResponse.ok(
-                    GenerationStartResponse(
-                        curriculum_id=curriculum_id,
-                        status="generating",
-                    )
-                )
-        
-        # 조건에 맞지 않으면 실패 처리
-        await crud.curriculums.update_curriculum(curriculum_id, status="failed")
-        return ApiResponse.fail(
-            "GENERATION_FAILED",
-            "커리큘럼 생성 시작에 실패했습니다. 외부 API 응답이 올바르지 않습니다.",
+
+    # 큐 대기/외부 API 호출은 백그라운드에서 수행하여 HTTP 타임아웃을 피함
+    asyncio.create_task(_dispatch_generation_with_queue(curriculum_id))
+    return ApiResponse.ok(
+        GenerationStartResponse(
+            curriculum_id=curriculum_id,
+            status="generating",
         )
-        
-    except Exception as e:
-        # 외부 API 호출 실패 시
-        await crud.curriculums.update_curriculum(curriculum_id, status="failed")
-        return ApiResponse.fail(
-            "GENERATION_FAILED",
-            f"커리큘럼 생성 시작에 실패했습니다: {str(e)}",
-        )
+    )
 
 
 @router.get("/{curriculum_id}/status", response_model=ApiResponse[GenerationStatusResponse])
@@ -756,6 +794,8 @@ async def import_curriculum(
             "INTERNAL_SERVER_ERROR",
             f"서버 오류가 발생했습니다: {str(e)}",
         )
+
+    await key_queue_service.release_curriculum_slot(request.curriculum_id)
     
     return ApiResponse.ok(
         CurriculumImportResponse(
@@ -800,6 +840,8 @@ async def import_failed_curriculum(
             "INTERNAL_SERVER_ERROR",
             f"서버 오류가 발생했습니다: {str(e)}",
         )
+
+    await key_queue_service.release_curriculum_slot(request.curriculum_id)
     
     return ApiResponse.ok(
         CurriculumImportResponse(

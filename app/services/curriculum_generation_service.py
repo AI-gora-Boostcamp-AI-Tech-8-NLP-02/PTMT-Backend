@@ -41,7 +41,10 @@ def _build_user_traits(curriculum: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def start_generation(curriculum_id: str) -> dict[str, Any] | None:
+async def start_generation(
+    curriculum_id: str,
+    assigned_key_slot: int | None = None,
+) -> dict[str, Any] | None:
     """외부 커리큘럼 생성 API를 호출하여 생성 작업을 시작합니다.
 
     - curriculum_id로 커리큘럼 및 연결된 논문 정보를 조회한 뒤
@@ -149,6 +152,7 @@ async def start_generation(curriculum_id: str) -> dict[str, Any] | None:
         "user_info": user_info,
         "paper_title": paper_title or "",
         "keywords": keywords_list,
+        "assigned_key_slot": assigned_key_slot,
     }
 
     url = f"{api_url}{CURR_GENERATE_PATH}"
@@ -163,5 +167,4 @@ async def start_generation(curriculum_id: str) -> dict[str, Any] | None:
         resp = await client.post(url, json=body, headers=headers)
         resp.raise_for_status()
         return resp.json()
-
 
