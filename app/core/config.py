@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     # 키 슬롯 대기열 설정
     KEY_QUEUE_TOTAL_KEYS: int = 5
     KEY_QUEUE_COOLDOWN_SECONDS: int = 30
+    KEY_QUEUE_CURRICULUM_COOLDOWN_SECONDS: int = 60
+    KEY_QUEUE_MAX_BUSY_SECONDS: int = 600
 
     @property
     def max_upload_size_bytes(self) -> int:

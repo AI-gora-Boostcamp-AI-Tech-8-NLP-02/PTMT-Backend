@@ -7,6 +7,7 @@ and cooldown handling.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import time
 import uuid
@@ -20,6 +21,7 @@ from app.core.config import settings
 SLOT_READY = "ready"
 SLOT_BUSY = "busy"
 SLOT_COOLDOWN = "cooldown"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -38,6 +40,7 @@ class KeySlot:
     slot_number: int
     status: str = SLOT_READY
     cooldown_until: float = 0.0
+    busy_started_at: float = 0.0
     current_task_type: Optional[str] = None
     current_task_id: Optional[str] = None
 
@@ -45,14 +48,32 @@ class KeySlot:
 class KeyQueueService:
     """Shared queue for key-slot assignment with cooldown support."""
 
-    def __init__(self, total_keys: int = 5, cooldown_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        total_keys: int = 5,
+        cooldown_seconds: int = 30,
+        cooldown_by_task: Optional[dict[str, int]] = None,
+        max_busy_seconds: int = 600,
+    ) -> None:
         if total_keys < 1:
             raise ValueError("total_keys must be >= 1")
         if cooldown_seconds < 0:
             raise ValueError("cooldown_seconds must be >= 0")
+        if max_busy_seconds < 1:
+            raise ValueError("max_busy_seconds must be >= 1")
+        if cooldown_by_task:
+            for task_type, task_cooldown in cooldown_by_task.items():
+                if task_cooldown < 0:
+                    raise ValueError(
+                        f"cooldown_by_task[{task_type}] must be >= 0"
+                    )
 
         self._total_keys = total_keys
         self._cooldown_seconds = cooldown_seconds
+        self._cooldown_by_task = dict(cooldown_by_task or {})
+        self._max_busy_seconds = max_busy_seconds
+        all_cooldowns = [self._cooldown_seconds, *self._cooldown_by_task.values()]
+        self._max_cooldown_seconds = max(all_cooldowns)
         self._slots: list[KeySlot] = [
             KeySlot(slot_number=index + 1) for index in range(total_keys)
         ]
@@ -69,12 +90,29 @@ class KeyQueueService:
             return None
         return self._slots[slot_number - 1]
 
-    def _refresh_slots_locked(self, now: float) -> None:
+    def _refresh_slots_locked(self, now: float) -> bool:
+        changed = False
         for slot in self._slots:
             if slot.status == SLOT_COOLDOWN and slot.cooldown_until <= now:
                 slot.status = SLOT_READY
                 slot.cooldown_until = 0.0
+                changed = True
+                continue
 
+            if slot.status == SLOT_BUSY:
+                busy_deadline = slot.busy_started_at + self._max_busy_seconds
+                if slot.busy_started_at > 0 and busy_deadline <= now:
+                    task_type = slot.current_task_type
+                    task_id = slot.current_task_id
+                    if self._release_slot_locked(slot, now):
+                        logger.warning(
+                            "Reclaimed stale busy key slot: slot=%s task_type=%s task_id=%s",
+                            slot.slot_number,
+                            task_type,
+                            task_id,
+                        )
+                        changed = True
+        return changed
     def _pick_ready_slot_locked(self, now: float) -> Optional[KeySlot]:
         self._refresh_slots_locked(now)
 
@@ -96,12 +134,37 @@ class KeyQueueService:
                 nearest = remaining
         return nearest
 
+    def _next_busy_reclaim_timeout_locked(self, now: float) -> Optional[float]:
+        nearest: Optional[float] = None
+        for slot in self._slots:
+            if slot.status != SLOT_BUSY:
+                continue
+            busy_started_at = slot.busy_started_at if slot.busy_started_at > 0 else now
+            remaining = max(0.0, busy_started_at + self._max_busy_seconds - now)
+            if nearest is None or remaining < nearest:
+                nearest = remaining
+        return nearest
+
+    def _next_wakeup_timeout_locked(self, now: float) -> Optional[float]:
+        cooldown_timeout = self._next_cooldown_timeout_locked(now)
+        busy_timeout = self._next_busy_reclaim_timeout_locked(now)
+        if cooldown_timeout is None:
+            return busy_timeout
+        if busy_timeout is None:
+            return cooldown_timeout
+        return min(cooldown_timeout, busy_timeout)
+
     def _remove_ticket_locked(self, ticket_id: str) -> bool:
         for index, ticket in enumerate(self._wait_queue):
             if ticket.ticket_id == ticket_id:
                 del self._wait_queue[index]
                 return True
         return False
+
+    def _resolve_cooldown_seconds(self, task_type: Optional[str]) -> int:
+        if not task_type:
+            return self._cooldown_seconds
+        return self._cooldown_by_task.get(task_type, self._cooldown_seconds)
 
     def _set_slot_busy_locked(
         self,
@@ -110,11 +173,13 @@ class KeyQueueService:
         task_type: str,
         task_id: Optional[str],
         curriculum_id: Optional[str],
+        now: float,
     ) -> None:
         slot.status = SLOT_BUSY
         slot.current_task_type = task_type
         slot.current_task_id = task_id
         slot.cooldown_until = 0.0
+        slot.busy_started_at = now
 
         if curriculum_id:
             self._curriculum_leases[curriculum_id] = slot.slot_number
@@ -139,8 +204,12 @@ class KeyQueueService:
         if slot.status != SLOT_BUSY:
             return False
 
+        task_type = slot.current_task_type
+        cooldown_seconds = self._resolve_cooldown_seconds(task_type)
+
         slot.status = SLOT_COOLDOWN
-        slot.cooldown_until = now + self._cooldown_seconds
+        slot.cooldown_until = now + cooldown_seconds
+        slot.busy_started_at = 0.0
         slot.current_task_type = None
         slot.current_task_id = None
 
@@ -179,7 +248,9 @@ class KeyQueueService:
             try:
                 while True:
                     now = self._now()
-                    self._refresh_slots_locked(now)
+                    changed = self._refresh_slots_locked(now)
+                    if changed:
+                        self._condition.notify_all()
 
                     is_queue_head = (
                         len(self._wait_queue) > 0
@@ -195,11 +266,12 @@ class KeyQueueService:
                                 task_type=ticket.task_type,
                                 task_id=ticket.task_id,
                                 curriculum_id=curriculum_id,
+                                now=now,
                             )
                             self._condition.notify_all()
                             return slot.slot_number
 
-                    timeout = self._next_cooldown_timeout_locked(now)
+                    timeout = self._next_wakeup_timeout_locked(now)
                     if timeout is None:
                         await self._condition.wait()
                         continue
@@ -259,7 +331,9 @@ class KeyQueueService:
 
         async with self._condition:
             now = self._now()
-            self._refresh_slots_locked(now)
+            changed = self._refresh_slots_locked(now)
+            if changed:
+                self._condition.notify_all()
 
             available = 0
             busy = 0
@@ -288,6 +362,8 @@ class KeyQueueService:
                         "current_task_id": slot.current_task_id,
                     }
                 )
+
+            nearest_busy_reclaim = self._next_busy_reclaim_timeout_locked(now)
 
             waiting_jobs = len(self._wait_queue)
             my_position: Optional[int] = None
@@ -321,9 +397,15 @@ class KeyQueueService:
                 next_available_in_seconds = 0
             elif nearest_cooldown is not None:
                 next_available_in_seconds = int(nearest_cooldown)
+            elif nearest_busy_reclaim is not None:
+                next_available_in_seconds = int(
+                    nearest_busy_reclaim + self._max_cooldown_seconds
+                )
             else:
                 # All slots are busy with unknown completion times.
-                next_available_in_seconds = self._cooldown_seconds
+                next_available_in_seconds = (
+                    self._max_busy_seconds + self._max_cooldown_seconds
+                )
 
             if waiting_jobs == 0:
                 estimated_wait_seconds = 0
@@ -332,12 +414,13 @@ class KeyQueueService:
             else:
                 waves = math.ceil(waiting_jobs / max(1, self._total_keys))
                 estimated_wait_seconds = int(
-                    next_available_in_seconds + max(0, waves - 1) * self._cooldown_seconds
+                    next_available_in_seconds
+                    + max(0, waves - 1) * self._max_cooldown_seconds
                 )
 
             return {
                 "total_keys": self._total_keys,
-                "cooldown_seconds": self._cooldown_seconds,
+                "cooldown_seconds": self._max_cooldown_seconds,
                 "available_keys": available,
                 "busy_keys": busy,
                 "cooldown_keys": cooldown,
@@ -353,4 +436,8 @@ class KeyQueueService:
 key_queue_service = KeyQueueService(
     total_keys=settings.KEY_QUEUE_TOTAL_KEYS,
     cooldown_seconds=settings.KEY_QUEUE_COOLDOWN_SECONDS,
+    cooldown_by_task={
+        "curriculum_generation": settings.KEY_QUEUE_CURRICULUM_COOLDOWN_SECONDS,
+    },
+    max_busy_seconds=settings.KEY_QUEUE_MAX_BUSY_SECONDS,
 )

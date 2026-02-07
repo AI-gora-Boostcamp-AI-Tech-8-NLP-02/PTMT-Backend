@@ -69,6 +69,47 @@ async def test_release_curriculum_slot_by_lease() -> None:
 
 
 @pytest.mark.asyncio
+async def test_curriculum_task_uses_task_specific_cooldown() -> None:
+    service = KeyQueueService(
+        total_keys=1,
+        cooldown_seconds=0,
+        cooldown_by_task={"curriculum_generation": 1},
+    )
+
+    slot = await service.acquire_slot(
+        task_type="curriculum_generation",
+        task_id="curr-1",
+    )
+    await service.release_slot(slot)
+
+    started_at = time.monotonic()
+    reassigned_slot = await service.acquire_slot(task_type="test", task_id="job-2")
+    elapsed = time.monotonic() - started_at
+
+    assert reassigned_slot == 1
+    assert elapsed >= 0.9
+
+
+@pytest.mark.asyncio
+async def test_stale_busy_slot_auto_reclaimed_after_timeout() -> None:
+    service = KeyQueueService(
+        total_keys=1,
+        cooldown_seconds=0,
+        max_busy_seconds=1,
+    )
+
+    first_slot = await service.acquire_slot(task_type="test", task_id="job-1")
+    assert first_slot == 1
+
+    started_at = time.monotonic()
+    second_slot = await service.acquire_slot(task_type="test", task_id="job-2")
+    elapsed = time.monotonic() - started_at
+
+    assert second_slot == 1
+    assert elapsed >= 0.9
+
+
+@pytest.mark.asyncio
 async def test_cancelled_waiting_task_removed_from_queue() -> None:
     service = KeyQueueService(total_keys=1, cooldown_seconds=0)
 
