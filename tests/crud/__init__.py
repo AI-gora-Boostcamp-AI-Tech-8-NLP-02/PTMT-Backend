@@ -1,0 +1,2 @@
+"""CRUD integration tests (Supabase)."""
+
